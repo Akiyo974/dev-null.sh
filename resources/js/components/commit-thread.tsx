@@ -33,6 +33,7 @@ import {
     useComposerPreview,
 } from '@/components/composer-preview';
 import { RailDot } from '@/components/graph-rail';
+import { ImageDescriptionReminder } from '@/components/image-description-reminder';
 import InputError from '@/components/input-error';
 import { LinkCardPicker } from '@/components/link-card-picker';
 import { LinkPreview } from '@/components/link-preview';
@@ -53,6 +54,7 @@ import {
     useIsCommitDeleted,
 } from '@/hooks/use-deleted-resources';
 import { useImageAttachments } from '@/hooks/use-image-attachments';
+import { useImageDescriptionReminder } from '@/hooks/use-image-description-reminder';
 import { focusCommit } from '@/hooks/use-keyboard-shortcuts';
 import { useLinkCard } from '@/hooks/use-link-card';
 import { useNow } from '@/hooks/use-now';
@@ -1178,6 +1180,10 @@ function ReplyComposer({
     });
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const secrets = useSecretWarning(body);
+    const imageDescriptions = useImageDescriptionReminder(
+        attachments.images,
+        attachments.descriptions,
+    );
     const isReplyable =
         images.length > 0 || characterCount(body.trim()) >= minBodyLength;
     const preview = useComposerPreview({
@@ -1225,6 +1231,7 @@ function ReplyComposer({
         if (
             request.processing ||
             attachments.isReading() ||
+            !imageDescriptions.beforeSubmit() ||
             !secrets.beforeSubmit()
         ) {
             return;
@@ -1327,6 +1334,11 @@ function ReplyComposer({
                 confirming={secrets.confirming}
                 onConfirmingChange={secrets.setConfirming}
                 onApprove={secrets.approve}
+                onEdit={preview.close}
+            />
+            <ImageDescriptionReminder
+                reminder={imageDescriptions}
+                textarea={textareaRef}
                 onEdit={preview.close}
             />
             <InputError
