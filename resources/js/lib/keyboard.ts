@@ -19,6 +19,24 @@ export function hasModKey(event: { metaKey: boolean; ctrlKey: boolean }) {
     return event.metaKey || event.ctrlKey;
 }
 
+/**
+ * The key a letter shortcut reads. Latin layouts (QWERTY, AZERTY, QWERTZ…) keep the letter they type, but a Cyrillic,
+ * Greek, Hebrew or Arabic layout types "л" on the K key, so there the physical key decides, like on GitHub or Gmail.
+ */
+export function shortcutKey(event: { key: string; code: string }): string {
+    const physical = /^Key([A-Z])$/u.exec(event.code);
+
+    if (
+        physical &&
+        /^\p{L}$/u.test(event.key) &&
+        !/^[a-z]$/iu.test(event.key)
+    ) {
+        return physical[1].toLowerCase();
+    }
+
+    return event.key;
+}
+
 const subscribe = () => () => {};
 
 /**
