@@ -19,9 +19,11 @@ export function CommitBody({
 }) {
     const { auth } = usePage().props;
 
+    // A body written in Arabic, Hebrew or Persian reads right to left; mentions, links and code stay left to right.
     return (
         <div
             data-commit-body
+            dir="auto"
             className={cn(
                 'leading-relaxed wrap-break-word whitespace-pre-wrap',
                 className,
@@ -43,6 +45,7 @@ export function CommitBody({
                         return (
                             <code
                                 key={index}
+                                dir="ltr"
                                 className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.875em]"
                             >
                                 {segment.code}

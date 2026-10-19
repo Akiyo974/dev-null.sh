@@ -454,6 +454,7 @@ export function MentionTextarea({
     return (
         <>
             <textarea
+                dir="auto"
                 {...props}
                 ref={setRefs}
                 value={value}
