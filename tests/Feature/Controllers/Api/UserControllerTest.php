@@ -68,3 +68,11 @@ it('never exposes hidden fields', function (): void {
 it('returns not found for unknown usernames', function (): void {
     $this->getJson('/api/v1/users/missing')->assertNotFound();
 });
+
+it('finds a username in any case, like github', function (): void {
+    User::factory()->create(['username' => 'NunoMaduro']);
+
+    $this->getJson('/api/v1/users/nunomaduro')
+        ->assertOk()
+        ->assertJsonPath('data.username', 'NunoMaduro');
+});
