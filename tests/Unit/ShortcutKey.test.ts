@@ -9,6 +9,14 @@ void test('non-Latin layouts read the letter of the physical key', () => {
     assert.equal(shortcutKey({ key: 'κ', code: 'KeyK' }), 'k');
     assert.equal(shortcutKey({ key: 'ל', code: 'KeyK' }), 'k');
     assert.equal(shortcutKey({ key: 'ن', code: 'KeyK' }), 'k');
+    // Arabic Shift+P types punctuation rather than a letter.
+    assert.equal(shortcutKey({ key: '؛', code: 'KeyP' }), 'p');
+});
+
+void test('AltGr characters stay what they type', () => {
+    // Windows reports AltGr as Ctrl+Alt: Latvian AltGr+K is "ķ", not Ctrl+K.
+    assert.equal(shortcutKey({ key: 'ķ', code: 'KeyK', altKey: true }), 'ķ');
+    assert.equal(shortcutKey({ key: 'ą', code: 'KeyA', altKey: true }), 'ą');
 });
 
 void test('Latin layouts keep the letter they type', () => {
