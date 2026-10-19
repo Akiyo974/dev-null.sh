@@ -7,6 +7,7 @@ import {
     FileCode,
     Flame,
     GitMerge,
+    GitPullRequest,
     Key,
     Server,
     Shield,
@@ -39,6 +40,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
     key: Key,
     cookie: Cookie,
     'bot-off': BotOff,
+    'git-pull-request': GitPullRequest,
 };
 
 export function AchievementsShelf({

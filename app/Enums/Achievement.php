@@ -19,6 +19,7 @@ enum Achievement: string
     case AuthorizedKeys = 'authorized_keys';
     case SweetTooth = 'sweet_tooth';
     case Luddite = 'luddite';
+    case Upstream = 'upstream';
 
     public function label(): string
     {
@@ -36,6 +37,7 @@ enum Achievement: string
             self::AuthorizedKeys => 'authorized_keys',
             self::SweetTooth => 'sweet tooth',
             self::Luddite => 'luddite',
+            self::Upstream => 'upstream',
         };
     }
 
@@ -55,6 +57,7 @@ enum Achievement: string
             self::AuthorizedKeys => 'Provisioned a public SSH key from GitHub.',
             self::SweetTooth => 'Received 100 pastéis across your account.',
             self::Luddite => 'Unfollowed Tom. Costs 100 XP until you follow him again.',
+            self::Upstream => 'Got a pull request merged into /dev/null itself.',
         };
     }
 
@@ -74,6 +77,7 @@ enum Achievement: string
             self::AuthorizedKeys => 'key',
             self::SweetTooth => 'cookie',
             self::Luddite => 'bot-off',
+            self::Upstream => 'git-pull-request',
         };
     }
 
@@ -93,6 +97,7 @@ enum Achievement: string
             self::AuthorizedKeys => 1,
             self::SweetTooth => 100,
             self::Luddite => 1,
+            self::Upstream => 1,
         };
     }
 }
