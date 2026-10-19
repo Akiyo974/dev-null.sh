@@ -19,6 +19,7 @@ import {
 import { useKeyLabels } from '@/lib/keyboard';
 import {
     awaitsDeveloperName,
+    offersCommitSearch,
     searchesCommits,
     searchIntent,
 } from '@/lib/search-intent';
@@ -93,7 +94,7 @@ export function SearchDialog({
         intent,
         intent === 'topic' ? visibleDevelopers.slice(0, 2) : visibleDevelopers,
         visibleCommits,
-        commitTerm,
+        commitTerm !== '' || (!isPicking && offersCommitSearch(term)),
     );
     const isLoading = developers.isLoading || commits.isLoading;
     const hasSearched =
@@ -413,7 +414,7 @@ function optionsFor(
     intent: ReturnType<typeof searchIntent>,
     developers: FoundDeveloper[],
     commits: Commit[],
-    commitTerm: string,
+    offersAllCommits: boolean,
 ): Option[] {
     const developerOptions: Option[] = developers.map(({ user, reason }) => ({
         kind: 'developer',
@@ -426,8 +427,9 @@ function optionsFor(
         id: `commit-${commit.id}`,
         commit,
     }));
-    const seeAll: Option[] =
-        commitTerm === '' ? [] : [{ kind: 'all', id: 'all' }];
+    const seeAll: Option[] = offersAllCommits
+        ? [{ kind: 'all', id: 'all' }]
+        : [];
 
     if (intent === 'topic') {
         return [...commitOptions, ...seeAll, ...developerOptions];
