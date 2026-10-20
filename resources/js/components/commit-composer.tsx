@@ -19,7 +19,6 @@ import {
     useComposerPreview,
 } from '@/components/composer-preview';
 import { GraphRail, RailAvatar } from '@/components/graph-rail';
-import { ImageDescriptionReminder } from '@/components/image-description-reminder';
 import InputError from '@/components/input-error';
 import type { UseIssueCommandReturn } from '@/components/issue-command';
 import {
@@ -40,7 +39,6 @@ import { SecretWarning } from '@/components/secret-warning';
 import { StashLabel } from '@/components/stash-label';
 import { Button } from '@/components/ui/button';
 import { useImageAttachments } from '@/hooks/use-image-attachments';
-import { useImageDescriptionReminder } from '@/hooks/use-image-description-reminder';
 import { useLinkCard } from '@/hooks/use-link-card';
 import type { UseLinkCardReturn } from '@/hooks/use-link-card';
 import { useSecretWarning } from '@/hooks/use-secret-warning';
@@ -97,7 +95,6 @@ function CommitComposerBody({
     poll,
     setPoll,
     secrets,
-    imageDescriptions,
     isSubmittable,
     processing,
     issue,
@@ -115,7 +112,6 @@ function CommitComposerBody({
     poll: PollDraft | null;
     setPoll: (poll: PollDraft | null) => void;
     secrets: ReturnType<typeof useSecretWarning>;
-    imageDescriptions: ReturnType<typeof useImageDescriptionReminder>;
     isSubmittable: boolean;
     processing: boolean;
     issue: UseIssueCommandReturn;
@@ -316,11 +312,6 @@ function CommitComposerBody({
                         confirming={secrets.confirming}
                         onConfirmingChange={secrets.setConfirming}
                         onApprove={secrets.approve}
-                        onEdit={preview.close}
-                    />
-                    <ImageDescriptionReminder
-                        reminder={imageDescriptions}
-                        textarea={textareaRef}
                         onEdit={preview.close}
                     />
                     <InputError message={error} />
@@ -589,10 +580,6 @@ export function CommitComposer({
     );
     const [poll, setPoll] = useState<PollDraft | null>(null);
     const secrets = useSecretWarning(body);
-    const imageDescriptions = useImageDescriptionReminder(
-        attachments.images,
-        attachments.descriptions,
-    );
 
     const hasImages = attachments.images.length > 0;
     const isCommittable =
@@ -653,7 +640,6 @@ export function CommitComposer({
             onBefore={() =>
                 !attachments.isReading() &&
                 issue.command === null &&
-                imageDescriptions.beforeSubmit() &&
                 secrets.beforeSubmit()
             }
             transform={(data) => ({
@@ -702,7 +688,6 @@ export function CommitComposer({
                         poll={poll}
                         setPoll={setPoll}
                         secrets={secrets}
-                        imageDescriptions={imageDescriptions}
                         isSubmittable={isSubmittable}
                         processing={processing}
                         issue={issue}

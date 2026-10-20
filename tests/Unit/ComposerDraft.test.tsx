@@ -84,8 +84,6 @@ const { LinkCardPicker } =
     await import('../../resources/js/components/link-card-picker');
 const { PollEditor } =
     await import('../../resources/js/components/poll-editor');
-const { ImageDescriptionReminder } =
-    await import('../../resources/js/components/image-description-reminder');
 
 type Element = ReactElement<Record<string, unknown>>;
 
@@ -360,49 +358,6 @@ test('schedules in UTC with pasted images and the chosen link card', () => {
         image_descriptions: [''],
         scheduled_at: scheduledAt,
     });
-});
-
-function imageDescriptionReminder(fields: Element[]) {
-    return fields.find((element) => element.type === ImageDescriptionReminder)!
-        .props.reminder as {
-        undescribed: number;
-        confirming: boolean;
-        approve: () => void;
-    };
-}
-
-test('asks before posting images without a description, once for those images', () => {
-    draft.body = 'Shipped the new dashboard';
-    draft.images = [image, image];
-    draft.descriptions = ['The dashboard', '  '];
-    let view = render();
-    assert.equal(view.form.props.onBefore(), false);
-
-    view = render();
-    let reminder = imageDescriptionReminder(view.fields);
-    assert.equal(reminder.confirming, true);
-    assert.equal(reminder.undescribed, 1);
-
-    reminder.approve();
-    view = render();
-    reminder = imageDescriptionReminder(view.fields);
-    assert.equal(reminder.confirming, false);
-    assert.equal(view.form.props.onBefore(), true);
-    assert.equal(view.form.props.onBefore(), true);
-
-    draft.images = [image];
-    draft.descriptions = [''];
-    assert.equal(render().form.props.onBefore(), false);
-});
-
-test('posts described images and text alone without asking', () => {
-    draft.images = [image];
-    draft.descriptions = ['A described screenshot'];
-    assert.equal(render().form.props.onBefore(), true);
-
-    draft.images = [];
-    draft.descriptions = [];
-    assert.equal(render().form.props.onBefore(), true);
 });
 
 test('retains restored images while sensitive text requires explicit approval', () => {
