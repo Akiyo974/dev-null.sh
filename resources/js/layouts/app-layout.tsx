@@ -1,4 +1,4 @@
-import { usePage, usePoll } from '@inertiajs/react';
+import { Head, usePage, usePoll } from '@inertiajs/react';
 import { useCallback, useState } from 'react';
 import { AppAside } from '@/components/app-aside';
 import {
@@ -17,7 +17,9 @@ import { CommitStarPolling } from '@/components/commit-star-polling';
 import { DeletedPageDialog } from '@/components/deleted-page-dialog';
 import { KeyboardShortcutsDialog } from '@/components/keyboard-shortcuts-dialog';
 import { LocalSignInDialog } from '@/components/local-sign-in-dialog';
+import { ProductHuntBanner } from '@/components/product-hunt-banner';
 import { SearchDialog } from '@/components/search-dialog';
+import { useChat, useRemoteAlerts, useUnreadMessages } from '@/hooks/use-chat';
 import { useIsComposerInView } from '@/hooks/use-composer-visibility';
 import { usePageDeletion } from '@/hooks/use-deleted-resources';
 import { useFixedPage } from '@/hooks/use-fixed-page';
@@ -25,6 +27,7 @@ import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 import { useNavOpen } from '@/hooks/use-nav-open';
 import { useTabSlide } from '@/hooks/use-tab-slide';
 import { signIn } from '@/lib/auth';
+import { backgroundPollOptions } from '@/lib/background-poll';
 import { cn } from '@/lib/utils';
 import type { AppLayoutProps } from '@/types';
 
@@ -65,79 +68,104 @@ export default function AppLayout({ children }: AppLayoutProps) {
     );
     useTabSlide();
     useFixedPage(isMessages);
+    useRemoteAlerts(auth.remotes !== null ? (auth.user?.id ?? null) : null);
 
     return (
-        <div
-            data-nav={isLayoutOpen ? 'expanded' : 'collapsed'}
-            className="mx-auto flex min-h-svh w-full max-w-[1264px] justify-center"
-        >
-            {component !== 'notification/index' && deletedPage === null && (
-                <NotificationCountPolling onNotFound={markPageDeleted} />
-            )}
+        <>
+            {!isMessages && <ProductHuntBanner />}
             <div
-                data-nav-rail
-                className="sticky top-0 hidden h-svh w-20 shrink-0 md:block lg:w-(--sidebar-width)"
+                data-nav={isLayoutOpen ? 'expanded' : 'collapsed'}
+                className="mx-auto flex min-h-svh w-full max-w-[1264px] justify-center"
             >
-                <AppNav onSearch={openSearch} onCompose={compose} />
-            </div>
-
-            <main
-                data-main
-                className={cn(
-                    'min-w-0 flex-1 bg-card pb-40 md:max-w-[620px] md:border-x md:pb-0 lg:max-w-[calc(876px-var(--sidebar-width))]',
-                    {
-                        'pb-20 md:max-w-[940px] lg:max-w-[calc(1196px-var(--sidebar-width))]':
-                            isMessages,
-                    },
+                {component !== 'notification/index' && deletedPage === null && (
+                    <NotificationCountPolling onNotFound={markPageDeleted} />
                 )}
-            >
-                <div data-nav-content>
-                    <MobileHeader onSearch={openSearch} />
-                    <CommitStarPolling>{children}</CommitStarPolling>
+                <div
+                    data-nav-rail
+                    className="sticky top-[var(--launch-banner-height,0px)] hidden h-[calc(100svh-var(--launch-banner-height,0px))] w-20 shrink-0 md:block lg:w-(--sidebar-width)"
+                >
+                    <AppNav onSearch={openSearch} onCompose={compose} />
                 </div>
-            </main>
 
-            {!isMessages && (
-                <AppAside
-                    onShowShortcuts={showShortcuts}
-                    onSearch={openSearch}
-                />
-            )}
+                <main
+                    data-main
+                    className={cn(
+                        'min-w-0 flex-1 bg-card pb-40 md:max-w-[620px] md:border-x md:pb-0 lg:max-w-[calc(876px-var(--sidebar-width))]',
+                        {
+                            'pb-20 md:max-w-[940px] lg:max-w-[calc(1196px-var(--sidebar-width))]':
+                                isMessages,
+                        },
+                    )}
+                >
+                    <div data-nav-content>
+                        <MobileHeader onSearch={openSearch} />
+                        <CommitStarPolling>{children}</CommitStarPolling>
+                    </div>
+                </main>
 
-            <MobileNav>
                 {!isMessages && (
-                    <MobileCommitButton
-                        isHidden={hasComposer && isComposerInView}
-                        onCompose={compose}
+                    <AppAside
+                        onShowShortcuts={showShortcuts}
+                        onSearch={openSearch}
                     />
                 )}
-            </MobileNav>
 
-            {deletedPage === null ? (
-                <CommitImageViewer />
-            ) : (
-                <DeletedPageDialog page={deletedPage} />
-            )}
+                <MobileNav>
+                    {!isMessages && (
+                        <MobileCommitButton
+                            isHidden={hasComposer && isComposerInView}
+                            onCompose={compose}
+                        />
+                    )}
+                </MobileNav>
 
-            {auth.user !== null && auth.remotes !== null && !isMessages && (
-                <ChatDock user={auth.user} />
-            )}
+                {deletedPage === null ? (
+                    <CommitImageViewer />
+                ) : (
+                    <DeletedPageDialog page={deletedPage} />
+                )}
 
-            <SearchDialog open={isSearching} onOpenChange={setIsSearching} />
+                {auth.user !== null && auth.remotes !== null && !isMessages && (
+                    <ChatDock user={auth.user} />
+                )}
 
-            <CommitComposerDialog
-                open={isComposing}
-                onOpenChange={setIsComposing}
-            />
+                <SearchDialog
+                    open={isSearching}
+                    onOpenChange={setIsSearching}
+                />
 
-            <KeyboardShortcutsDialog
-                open={isShowingShortcuts}
-                onOpenChange={setIsShowingShortcuts}
-                canModerate={auth.isAdmin}
-            />
+                <CommitComposerDialog
+                    open={isComposing}
+                    onOpenChange={setIsComposing}
+                />
 
-            {isGuest && <LocalSignInDialog />}
-        </div>
+                <KeyboardShortcutsDialog
+                    open={isShowingShortcuts}
+                    onOpenChange={setIsShowingShortcuts}
+                    canModerate={auth.isAdmin}
+                />
+
+                {isGuest && <LocalSignInDialog />}
+            </div>
+            <NotificationTitle />
+        </>
+    );
+}
+
+function NotificationTitle() {
+    const {
+        url,
+        props: { auth },
+    } = usePage();
+    const { notificationTitle } = useChat();
+    const unread = useUnreadMessages() + auth.unreadNotificationsCount;
+
+    // A fresh provider takes precedence over the page's title; removing it restores that title after the alert.
+    return (
+        <Head
+            key={JSON.stringify([url, unread, notificationTitle])}
+            title={notificationTitle ?? undefined}
+        />
     );
 }
 
@@ -148,7 +176,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
 function NotificationCountPolling({ onNotFound }: { onNotFound: () => void }) {
     usePoll(
         30_000,
-        {
+        backgroundPollOptions({
             only: ['auth.unreadNotificationsCount', 'auth.unreadMessagesCount'],
             onHttpException: (response) => {
                 if (response.status !== 404) {
@@ -159,7 +187,7 @@ function NotificationCountPolling({ onNotFound }: { onNotFound: () => void }) {
 
                 return false;
             },
-        },
+        }),
         { mode: 'rest', background: 'pause' },
     );
 

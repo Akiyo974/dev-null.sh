@@ -5,7 +5,7 @@ import type { CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { twMerge } from 'tailwind-merge';
 import type { DeletedCommit, Lane, ThreadCommit } from '@/types';
-import type { FlashToast } from '@/types/ui';
+import type { FlashToast, TimeoutFlash } from '@/types/ui';
 
 /**
  * The interface is in English, so month and weekday names are too, whatever the browser's language.
@@ -59,6 +59,14 @@ export function formatRelativeTime(date: string, now: Date = new Date()) {
     });
 }
 
+export function formatFullDate(date: string): string {
+    return new Date(date).toLocaleDateString(dateLocale, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+}
+
 export function formatFullDateTime(date: string, timeZone?: string): string {
     const value = new Date(date);
 
@@ -107,30 +115,30 @@ export function laneTint(color: string, percent: number): string {
     return `color-mix(in oklab, ${color} ${percent}%, transparent)`;
 }
 
-/** Hold the start lane this far, then fade into the next over the remainder. */
-export const laneStrokeHold = 0.5;
+type LaneStrokeOptions = {
+    axis?: 'vertical' | 'horizontal';
+    /** The length of each dash and of each gap, in pixels. */
+    dash?: number;
+    /** Ends the dashes on a whole gap, so a dashed path that continues below picks up the same rhythm. */
+    anchor?: 'start' | 'end';
+};
 
 /**
- * Dashed reply connectors. Same colour stays solid; different colours hold the
- * start lane, then fade into the next over the final stretch toward the child.
+ * Dashed lane connectors.
  */
 export function laneStrokeStyle(
-    from: string,
-    to: string = from,
-    axis: 'vertical' | 'horizontal' = 'vertical',
+    lane: string,
+    options: LaneStrokeOptions = {},
 ): CSSProperties {
-    const isVertical = axis === 'vertical';
-    const hold = `${laneStrokeHold * 100}%`;
-    const dash = isVertical
-        ? 'repeating-linear-gradient(to bottom, #000 0 2px, transparent 2px 4px)'
-        : 'repeating-linear-gradient(to right, #000 0 2px, transparent 2px 4px)';
+    const isVertical = (options.axis ?? 'vertical') === 'vertical';
+    const length = options.dash ?? 2;
+    const dash =
+        options.anchor === 'end'
+            ? `repeating-linear-gradient(${isVertical ? 'to top' : 'to left'}, transparent 0 ${length}px, #000 ${length}px ${length * 2}px)`
+            : `repeating-linear-gradient(${isVertical ? 'to bottom' : 'to right'}, #000 0 ${length}px, transparent ${length}px ${length * 2}px)`;
 
     return {
-        backgroundImage:
-            from === to
-                ? undefined
-                : `linear-gradient(${isVertical ? 'to bottom' : 'to right'}, ${from} 0%, ${from} ${hold}, ${to} 100%)`,
-        backgroundColor: from === to ? from : undefined,
+        backgroundColor: lane,
         WebkitMaskImage: dash,
         maskImage: dash,
         WebkitMaskRepeat: 'repeat',
@@ -147,10 +155,13 @@ export function isDeleted(commit: {
 /**
  * Whether a commit submission came back without a commit. The `committed` and `scheduled` flashes can't tell:
  * they live in the session, so a poll or another tab landing before the redirect takes them. The rejections
- * that still redirect back (rate limited, page expired) always flash an error toast instead.
+ * that still redirect back flash an error toast (rate limited, page expired), or the timeout the user is in.
  */
-export function isRejectedSubmission(flash: { toast?: FlashToast }): boolean {
-    return flash.toast?.type === 'error';
+export function isRejectedSubmission(flash: {
+    toast?: FlashToast;
+    timeout?: TimeoutFlash;
+}): boolean {
+    return flash.toast?.type === 'error' || flash.timeout !== undefined;
 }
 
 export function laneOf(commit: ThreadCommit): string {
@@ -217,6 +228,24 @@ export function formatZonedTime(date: string, timeZone: string): string {
         minute: '2-digit',
         timeZone,
     });
+}
+
+/**
+ * The offset a timezone has at a moment, like `UTC +02:00`, or `UTC` when it has none.
+ */
+export function formatUtcOffset(date: Date, timeZone: string): string {
+    const offset = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'longOffset',
+    })
+        .formatToParts(date)
+        .find((part) => part.type === 'timeZoneName')?.value;
+
+    if (offset === undefined || offset === 'GMT' || offset === 'GMT+00:00') {
+        return 'UTC';
+    }
+
+    return offset.replace('GMT', 'UTC ');
 }
 
 export function formatZonedDate(date: string, timeZone: string): string {
