@@ -687,3 +687,66 @@ test('a top-up that lands after someone else was dismissed takes them back out a
     );
     assert.notEqual(reloads.at(-1), topUp);
 });
+
+function followSuggestion(user: SuggestedUser): void {
+    const button = find(
+        SuggestedUserRow(
+            suggestionRow(user) as Parameters<typeof SuggestedUserRow>[0],
+        ),
+        (props) => props['data-test'] === 'suggested-follow-button',
+    );
+    assert.ok(button);
+
+    const link = find(render(button), (props) => 'aria-label' in props);
+    assert.ok(link);
+
+    (link.props.onSuccess as () => void)();
+}
+
+test('following a suggestion hands its slot to the next spare a moment later and tops up the spares', () => {
+    const [vic, wren, xan, yara, zoe] = suggestions(
+        'vic',
+        'wren',
+        'xan',
+        'yara',
+        'zoe',
+    );
+    suggestedUsers = [vic, wren, xan, yara];
+    timers.splice(0);
+    const visitCount = visits.length;
+
+    followSuggestion(wren);
+
+    assert.deepEqual(shownSuggestions(), ['vic', 'wren', 'xan']);
+
+    timers.splice(0).forEach((timer) => timer());
+
+    assert.deepEqual(shownSuggestions(), ['vic', 'yara', 'xan']);
+    assert.equal(visits.length, visitCount);
+    assert.deepEqual(reloads.at(-1)?.only, ['suggestedUsers']);
+
+    suggestedUsers = [vic, yara, xan, wren, zoe];
+    finishTopUp(reloads.at(-1)!);
+
+    assert.deepEqual(
+        suggestedUsers.map((user) => user.id),
+        ['vic', 'yara', 'xan', 'zoe'],
+    );
+});
+
+test('following the last suggestion says nobody is left once a top-up finds nobody', () => {
+    const [ugo] = suggestions('ugo');
+    suggestedUsers = [ugo];
+    timers.splice(0);
+
+    followSuggestion(ugo);
+    timers.splice(0).forEach((timer) => timer());
+    timers.splice(0).forEach((timer) => timer());
+
+    assert.deepEqual(suggestedUsers, []);
+    assert.equal(hasElementNamed(WhoToFollow(), 'WhoToFollowEmptied'), false);
+
+    finishTopUp(reloads.at(-1)!);
+
+    assert.equal(hasElementNamed(WhoToFollow(), 'WhoToFollowEmptied'), true);
+});
