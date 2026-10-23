@@ -44,7 +44,7 @@ final readonly class UpstreamContributorsQuery
         }
 
         try {
-            $ids = $this->github->accountIds('repos/'.ChangelogQuery::Repository.'/contributors', self::MaxPages);
+            $ids = $this->github->accountIds('repos/'.config()->string('services.github.repository').'/contributors', self::MaxPages);
             Cache::put(self::Key.':last', $ids);
             Cache::put(self::Key, $ids, now()->addHour());
         } catch (Throwable) {

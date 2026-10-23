@@ -20,7 +20,7 @@ it('finds contributors by their github account id, not their username', function
     $other = User::factory()->create(['github_id' => '456']);
 
     Http::fake([
-        'api.github.com/repos/nunomaduro/dev-null.sh/contributors*' => Http::response(contributorsResponse([123, 789])),
+        'api.github.com/repos/dev-null-sh/dev-null.sh/contributors*' => Http::response(contributorsResponse([123, 789])),
     ]);
 
     $query = resolve(UpstreamContributorsQuery::class);
@@ -35,7 +35,7 @@ it('reads every page of contributors and keeps them for an hour', function (): v
     $lastPage = User::factory()->create(['github_id' => '1000']);
 
     Http::fake([
-        'api.github.com/repos/nunomaduro/dev-null.sh/contributors*' => Http::sequence()
+        'api.github.com/repos/dev-null-sh/dev-null.sh/contributors*' => Http::sequence()
             ->push(contributorsResponse(range(1, 100)))
             ->push(contributorsResponse([1000])),
     ]);
@@ -55,7 +55,7 @@ it('keeps the last known contributors while github does not answer', function ()
     $contributor = User::factory()->create(['github_id' => '123']);
 
     Http::fake([
-        'api.github.com/repos/nunomaduro/dev-null.sh/contributors*' => Http::sequence()
+        'api.github.com/repos/dev-null-sh/dev-null.sh/contributors*' => Http::sequence()
             ->push(contributorsResponse([123]))
             ->push('Unavailable', 503)
             ->push(contributorsResponse([])),
@@ -78,7 +78,7 @@ it('keeps the last known contributors while github does not answer', function ()
 
 it('has nobody when github has never answered', function (): void {
     Http::fake([
-        'api.github.com/repos/nunomaduro/dev-null.sh/contributors*' => Http::response('Unavailable', 503),
+        'api.github.com/repos/dev-null-sh/dev-null.sh/contributors*' => Http::response('Unavailable', 503),
     ]);
 
     expect(resolve(UpstreamContributorsQuery::class)->includes(User::factory()->create()))->toBeFalse();

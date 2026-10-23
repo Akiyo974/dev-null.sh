@@ -13,7 +13,7 @@ use App\Queries\UserAchievementsQuery;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
-    $this->travelTo(now()->setDate(2026, 10, 15)->setTime(12, 0));
+    $this->travelTo(now()->setDate(2026, 10, 22)->setTime(12, 0));
 });
 
 it('calculates initial rank and zero progress for a new user without activity', function (): void {
@@ -28,7 +28,8 @@ it('calculates initial rank and zero progress for a new user without activity', 
         ->and($result['level_progress'])->toBe(0)
         ->and($result['ranks'])->toHaveCount(6)
         ->and($result['xp_breakdown']['commits']['xp'])->toBe(0)
-        ->and($result['badges'])->toHaveCount(14);
+        ->and($result['xp_breakdown']['shell_shocked']['xp'])->toBe(0)
+        ->and($result['badges'])->toHaveCount(15);
 
     foreach ($result['badges'] as $badge) {
         expect($badge['unlocked'])->toBeFalse()
@@ -71,7 +72,7 @@ it('unlocks upstream badge for developers with a commit on /dev/null itself', fu
     $user = User::factory()->create(['github_id' => '456']);
 
     Http::fake([
-        'api.github.com/repos/nunomaduro/dev-null.sh/contributors*' => Http::response([['id' => 123, 'login' => 'octocat', 'type' => 'User']]),
+        'api.github.com/repos/dev-null-sh/dev-null.sh/contributors*' => Http::response([['id' => 123, 'login' => 'octocat', 'type' => 'User']]),
     ]);
 
     $badge = fn (User $user): array => collect(resolve(UserAchievementsQuery::class)->get($user, $user)['badges'])
@@ -313,3 +314,44 @@ it('does not identify Tom by a mutable username', function (): void {
 
     expect(collect($result['badges'])->firstWhere('id', 'luddite')['unlocked'])->toBeFalse();
 });
+
+it('adds the shell shocked reward to activity xp and includes the luddite penalty', function (bool $unfollowedTom, int $xp): void {
+    $user = User::factory()->create(['created_at' => '2026-10-21 13:59:59']);
+    Commit::factory()->for($user)->create();
+
+    if ($unfollowedTom) {
+        User::factory()->create(['github_id' => CreateTomFriendship::GITHUB_ID])->following()->attach($user);
+    }
+
+    $result = resolve(UserAchievementsQuery::class)->get($user, null);
+
+    expect($result['xp'])->toBe($xp)
+        ->and($result['xp_breakdown']['shell_shocked'])->toBe(['count' => 1, 'multiplier' => 100, 'xp' => 100])
+        ->and(collect($result['badges'])->firstWhere('id', 'shell_shocked'))->toBe([
+            'id' => 'shell_shocked',
+            'name' => 'shell shocked',
+            'description' => "Survived the php2shell downtime of Oct '26. Earns 100 XP.",
+            'icon' => 'bomb',
+            'unlocked' => true,
+            'progress' => 1,
+            'target' => 1,
+        ]);
+})->with([
+    'without penalty' => [false, 125],
+    'with penalty' => [true, 25],
+]);
+
+it('awards shell shocked and 100 xp only to accounts created before the UTC cutoff', function (string $createdAt, bool $unlocked, int $xp, int $level): void {
+    $user = User::factory()->create(['created_at' => $createdAt]);
+
+    $result = resolve(UserAchievementsQuery::class)->get($user, null);
+
+    expect(collect($result['badges'])->firstWhere('id', 'shell_shocked')['unlocked'])->toBe($unlocked)
+        ->and($result['xp'])->toBe($xp)
+        ->and($result['xp_breakdown']['shell_shocked']['xp'])->toBe($xp)
+        ->and($result['level'])->toBe($level);
+})->with([
+    'just before cutoff' => ['2026-10-21 13:59:59', true, 100, 2],
+    'exactly at cutoff' => ['2026-10-21 14:00:00', false, 0, 1],
+    'just after cutoff' => ['2026-10-21 14:00:01', false, 0, 1],
+]);

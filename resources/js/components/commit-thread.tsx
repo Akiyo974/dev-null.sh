@@ -1,4 +1,4 @@
-import { Link, router, useHttp, usePage } from '@inertiajs/react';
+import { Link, router, useRemember, useHttp, usePage } from '@inertiajs/react';
 import {
     ChevronDown,
     CornerDownRight,
@@ -7,7 +7,13 @@ import {
     Trash2,
 } from 'lucide-react';
 import type { CSSProperties, FormEvent, KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import {
+    useCallback,
+    useEffect,
+    useEffectEvent,
+    useRef,
+    useState,
+} from 'react';
 import { toast } from 'sonner';
 import CommitController from '@/actions/App/Http/Controllers/CommitController';
 import CommitLinkPreviewController from '@/actions/App/Http/Controllers/CommitLinkPreviewController';
@@ -23,6 +29,7 @@ import {
 } from '@/components/commit-image-picker';
 import { CommitImages } from '@/components/commit-images';
 import { CommitPastelButton } from '@/components/commit-pastel-button';
+import { CommitRulesDialog, useCommitRules } from '@/components/commit-rules';
 import { CommitSecondaryActions } from '@/components/commit-secondary-actions';
 import { CommitStarButton } from '@/components/commit-star-button';
 import { CommitStatusBadge } from '@/components/commit-status-badge';
@@ -32,13 +39,19 @@ import {
     PreviewToggle,
     useComposerPreview,
 } from '@/components/composer-preview';
-import { RailDot } from '@/components/graph-rail';
+import {
+    useGraphDimmed,
+    useGraphNode,
+    useGraphNodeId,
+    useGraphOverlay,
+} from '@/components/graph-canvas';
+import { RailDot, railDotRing } from '@/components/graph-rail';
 import InputError from '@/components/input-error';
 import { LinkCardPicker } from '@/components/link-card-picker';
 import { LinkPreview } from '@/components/link-preview';
 import { MentionTextarea } from '@/components/mention-textarea';
-import { SecretWarning } from '@/components/secret-warning';
 import { StashLabel } from '@/components/stash-label';
+import { showTimeout, timeoutFrom } from '@/components/timeout-dialog';
 import { TimestampTooltip } from '@/components/timestamp-tooltip';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,14 +69,19 @@ import { useImageAttachments } from '@/hooks/use-image-attachments';
 import { focusCommit } from '@/hooks/use-keyboard-shortcuts';
 import { useLinkCard } from '@/hooks/use-link-card';
 import { useNow } from '@/hooks/use-now';
-import { useSecretWarning } from '@/hooks/use-secret-warning';
 import { useSharedState } from '@/hooks/use-shared-state';
 import { moveCaretToEnd, useHasStash, useStash } from '@/hooks/use-stash';
 import { useUser } from '@/hooks/use-user';
 import { signIn } from '@/lib/auth';
-import { maxBodyLength, minBodyLength } from '@/lib/commit';
+import {
+    bodyCharacterCount,
+    maxBodyLength,
+    maxRawBodyLength,
+    minBodyLength,
+} from '@/lib/commit';
 import { commitStateKey } from '@/lib/commit-state';
 import { hasModKey } from '@/lib/keyboard';
+import { exactCountTitle, formatCount, formatExactCount } from '@/lib/numbers';
 import {
     characterCount,
     cn,
@@ -181,7 +199,7 @@ async function fetchReplies(
 }
 
 async function fetchRepliesAfter(
-    commit: ThreadCommit,
+    commit: Pick<ThreadCommit, 'id'>,
     replies: ThreadCommit[],
     cursor: string | null,
     minimum: number,
@@ -206,7 +224,7 @@ async function fetchRepliesAfter(
 }
 
 async function fetchRepliesUntil(
-    commit: ThreadCommit,
+    commit: Pick<ThreadCommit, 'id'>,
     minimum: number,
     perPage: number,
     newest: boolean,
@@ -241,38 +259,68 @@ export function useThread(
     const isPreview = preview !== undefined;
     const initial = preview ?? initialReplies;
     const { repliesPerPage, continuation } = usePage().props;
-    const [replies, setReplies] = useState<ThreadCommit[] | null>(
-        initial?.data ?? null,
-    );
-    const [nextCursor, setNextCursor] = useState<string | null>(
-        initial?.next_cursor ?? null,
-    );
+    const historyKey = `thread:${commit.id}:${except ?? ''}`;
+    const remembered = router.restore<{
+        replies: ThreadCommit[] | null;
+        nextCursor: string | null;
+        isOpen: boolean;
+    }>(historyKey);
     const [count, setCount] = useSharedState(
         commitStateKey('replies_count', commit.id),
         commit.replies_count ?? 0,
     );
+    const restoresDocument =
+        remembered !== undefined &&
+        (
+            performance.getEntriesByType('navigation')[0] as
+                | PerformanceNavigationTiming
+                | undefined
+        )?.type === 'back_forward';
     const [shouldLoadReplies] = useState(
-        (loadsReplies && count > 0) ||
-            (initial !== undefined && changedThreadIds.has(commit.id)),
+        (remembered?.isOpen === true && remembered.replies === null) ||
+            (remembered === undefined && loadsReplies && count > 0) ||
+            ((initial !== undefined || remembered?.replies != null) &&
+                (changedThreadIds.has(commit.id) || restoresDocument)),
     );
-    const [isOpen, setIsOpen] = useState(
-        initial !== undefined || shouldLoadReplies,
+    const [initialReplyLimit] = useState(
+        remembered?.replies?.length
+            ? remembered.nextCursor === null
+                ? Infinity
+                : remembered.replies.length
+            : repliesPerPage,
     );
-    const [isLoading, setIsLoading] = useState(false);
+    const [{ replies, nextCursor, isOpen }, setThread] = useRemember(
+        {
+            replies: initial?.data ?? null,
+            nextCursor: initial?.next_cursor ?? null,
+            isOpen: initial !== undefined || shouldLoadReplies,
+        },
+        historyKey,
+    );
+    const [isLoading, setIsLoading] = useState(shouldLoadReplies);
+    const replyRequest = useRef(0);
     const [isReplying, setIsReplying] = useState(false);
 
-    const [previousPreview, setPreviousPreview] = useState(preview);
-    if (preview !== previousPreview) {
-        setPreviousPreview(preview);
-        if (preview !== undefined && (replies?.length ?? 0) <= repliesPerPage) {
-            setReplies(preview.data);
-            setNextCursor(preview.next_cursor);
+    const [previousInitial, setPreviousInitial] = useState(initial);
+    if (initial !== previousInitial) {
+        setPreviousInitial(initial);
+        if (initial !== undefined && (replies?.length ?? 0) <= repliesPerPage) {
+            ++replyRequest.current;
+            setIsLoading(false);
+            setThread((current) => ({
+                ...current,
+                replies: initial.data,
+                nextCursor: initial.next_cursor,
+            }));
         }
     }
 
     const applyPage = (loaded: ThreadCommit[], cursor: string | null) => {
-        setReplies(loaded);
-        setNextCursor(cursor);
+        setThread((current) => ({
+            ...current,
+            replies: loaded,
+            nextCursor: cursor,
+        }));
 
         if (cursor === null) {
             setCount(loaded.length);
@@ -287,12 +335,21 @@ export function useThread(
                   ? Infinity
                   : replies.length + extra;
 
+        const request = ++replyRequest.current;
         setIsLoading(true);
 
         fetchRepliesUntil(commit, minimum, repliesPerPage, isPreview, except)
-            .then((page) => applyPage(page.data, page.next_cursor))
+            .then((page) => {
+                if (request === replyRequest.current) {
+                    applyPage(page.data, page.next_cursor);
+                }
+            })
             .catch(() => undefined)
-            .finally(() => setIsLoading(false));
+            .finally(() => {
+                if (request === replyRequest.current) {
+                    setIsLoading(false);
+                }
+            });
     };
 
     const loadUntil = (minimum: number) => {
@@ -300,6 +357,7 @@ export function useThread(
             return;
         }
 
+        const request = ++replyRequest.current;
         setIsLoading(true);
 
         fetchRepliesAfter(
@@ -310,12 +368,21 @@ export function useThread(
             isPreview,
             except,
         )
-            .then((page) => applyPage(page.data, page.next_cursor))
+            .then((page) => {
+                if (request === replyRequest.current) {
+                    applyPage(page.data, page.next_cursor);
+                }
+            })
             .catch(() => undefined)
-            .finally(() => setIsLoading(false));
+            .finally(() => {
+                if (request === replyRequest.current) {
+                    setIsLoading(false);
+                }
+            });
     };
 
     const commitId = commit.id;
+    const onRepliesLoaded = useEffectEvent(applyPage);
 
     useEffect(() => {
         if (!shouldLoadReplies) {
@@ -323,26 +390,64 @@ export function useThread(
         }
 
         let isCurrent = true;
+        const request = ++replyRequest.current;
+        setIsLoading(true);
 
-        fetchReplies({ id: commitId }, null, isPreview, repliesPerPage, except)
+        fetchRepliesUntil(
+            { id: commitId },
+            initialReplyLimit,
+            repliesPerPage,
+            isPreview,
+            except,
+        )
             .then((page) => {
-                if (isCurrent) {
-                    setReplies(page.data);
-                    setNextCursor(page.next_cursor);
+                if (isCurrent && request === replyRequest.current) {
+                    onRepliesLoaded(page.data, page.next_cursor);
                 }
             })
-            .catch(() => undefined);
+            .catch(() => undefined)
+            .finally(() => {
+                if (isCurrent && request === replyRequest.current) {
+                    setIsLoading(false);
+                }
+            });
 
         return () => {
             isCurrent = false;
         };
-    }, [commitId, shouldLoadReplies, isPreview, except, repliesPerPage]);
+    }, [
+        commitId,
+        shouldLoadReplies,
+        isPreview,
+        except,
+        repliesPerPage,
+        initialReplyLimit,
+    ]);
 
     const onExceptChanged = useEffectEvent(() => {
         if (replies !== null && !shouldLoadReplies) {
             reload();
         }
     });
+
+    const onInitialChanged = useEffectEvent(() => {
+        if (
+            replies !== null &&
+            (initial === undefined || replies.length > repliesPerPage)
+        ) {
+            reload();
+        }
+    });
+    const loadedInitial = useRef({ initial, count: commit.replies_count });
+    useEffect(() => {
+        if (
+            loadedInitial.current.initial !== initial ||
+            loadedInitial.current.count !== commit.replies_count
+        ) {
+            loadedInitial.current = { initial, count: commit.replies_count };
+            onInitialChanged();
+        }
+    }, [initial, commit.replies_count]);
 
     const loadedExcept = useRef(except);
     useEffect(() => {
@@ -398,7 +503,7 @@ export function useThread(
                 reload();
             }
 
-            setIsOpen(!isOpen);
+            setThread((current) => ({ ...current, isOpen: !current.isOpen }));
         },
         loadMore: () => loadUntil((replies?.length ?? 0) + repliesPerPage),
         loadAll: () => loadUntil(Infinity),
@@ -410,7 +515,7 @@ export function useThread(
             setCount(parent.replies_count);
 
             if (parent.continuation_id === continuationId) {
-                setIsOpen(true);
+                setThread((current) => ({ ...current, isOpen: true }));
                 reload();
 
                 return;
@@ -511,7 +616,12 @@ export function ThreadActions({
                     {thread.count > 0 && !thread.isPreview && (
                         <ActionTooltip
                             label={
-                                thread.isOpen ? 'Hide replies' : 'Show replies'
+                                thread.isOpen
+                                    ? 'Hide replies'
+                                    : exactCountTitle(thread.count) ===
+                                        undefined
+                                      ? 'Show replies'
+                                      : `Show ${exactCountTitle(thread.count)} replies`
                             }
                             shortcut={hasKeyboardShortcuts ? 'o' : undefined}
                         >
@@ -535,7 +645,7 @@ export function ThreadActions({
                                 />
                                 {thread.isOpen
                                     ? 'Hide replies'
-                                    : `${thread.count} ${thread.count === 1 ? 'reply' : 'replies'}`}
+                                    : `${formatCount(thread.count)} ${thread.count === 1 ? 'reply' : 'replies'}`}
                             </button>
                         </ActionTooltip>
                     )}
@@ -567,7 +677,9 @@ export function ThreadSpine({
     thread: Thread;
     className?: string;
 }) {
-    if (!thread.isOpen || !thread.replies?.length) {
+    const isOverlaid = useGraphOverlay();
+
+    if (isOverlaid || !thread.isOpen || !thread.replies?.length) {
         return null;
     }
 
@@ -646,13 +758,21 @@ function ThreadElbow() {
 export function ThreadReplies({
     thread,
     depth,
+    graphParent,
 }: {
     thread: Thread;
     depth: number;
+    /** In a graph canvas, the node the first reply branches off. */
+    graphParent?: string;
 }) {
+    const isOverlaid = useGraphOverlay();
+    const nodeId = useGraphNodeId();
+
     if (!thread.isOpen) {
         return null;
     }
+
+    const branchFrom = graphParent ?? nodeId(thread.commit.id);
 
     const isFlattened = depth >= maxIndentDepth;
     const layout =
@@ -678,8 +798,24 @@ export function ThreadReplies({
                             reply={reply}
                             parent={thread.commit}
                             depth={depth + 1}
+                            graph={
+                                isFlattened
+                                    ? {}
+                                    : {
+                                          after:
+                                              index === 0
+                                                  ? undefined
+                                                  : nodeId(
+                                                        replies[index - 1].id,
+                                                    ),
+                                          parent:
+                                              index === 0
+                                                  ? branchFrom
+                                                  : undefined,
+                                      }
+                            }
                             links={
-                                isFlattened ? null : (
+                                isFlattened || isOverlaid ? null : (
                                     <ReplyLinks
                                         previousLane={
                                             index === 0
@@ -699,25 +835,41 @@ export function ThreadReplies({
                     ))}
                     {thread.hasMore && (
                         <div className="relative pt-1.5 pl-(--indent)">
-                            {!isFlattened && thread.replies.length > 0 && (
-                                <span
-                                    aria-hidden
-                                    className={cn(
-                                        replyLink,
-                                        'top-0 h-5 sm:h-5.5',
-                                    )}
-                                    style={laneStrokeStyle(
-                                        laneOf(
-                                            thread.replies[
-                                                thread.replies.length - 1
-                                            ],
-                                        ),
-                                    )}
-                                />
-                            )}
+                            {!isFlattened &&
+                                !isOverlaid &&
+                                thread.replies.length > 0 && (
+                                    <span
+                                        aria-hidden
+                                        className={cn(
+                                            replyLink,
+                                            'top-0 h-5 sm:h-5.5',
+                                        )}
+                                        style={laneStrokeStyle(
+                                            laneOf(
+                                                thread.replies[
+                                                    thread.replies.length - 1
+                                                ],
+                                            ),
+                                        )}
+                                    />
+                                )}
                             <MoreRepliesButton
                                 thread={thread}
                                 isFlattened={depth + 1 > maxIndentDepth}
+                                graph={
+                                    isFlattened
+                                        ? {}
+                                        : thread.replies.length > 0
+                                          ? {
+                                                after: nodeId(
+                                                    thread.replies[
+                                                        thread.replies.length -
+                                                            1
+                                                    ].id,
+                                                ),
+                                            }
+                                          : { parent: branchFrom }
+                                }
                             />
                         </div>
                     )}
@@ -754,17 +906,28 @@ function moreRepliesLabel(thread: Thread): string {
     }
 
     return thread.remaining > 1
-        ? `Show the last ${thread.remaining}`
+        ? `Show the last ${formatCount(thread.remaining)}`
         : 'Show more';
 }
 
 function MoreRepliesButton({
     thread,
     isFlattened,
+    graph,
 }: {
     thread: Thread;
     isFlattened: boolean;
+    graph: ReplyGraph;
 }) {
+    const dotRef = useGraphNode({
+        id: useGraphNodeId()(`${thread.commit.id}:more`),
+        lane: 'var(--muted-foreground)',
+        dashed: true,
+        dimmed: useGraphDimmed(),
+        ring: railDotRing,
+        ...graph,
+    });
+
     return (
         <div className="flex max-w-full items-center gap-0.5 text-[13px] text-muted-foreground">
             <button
@@ -778,7 +941,9 @@ function MoreRepliesButton({
                     aria-hidden
                     className="relative flex size-6 shrink-0 items-center justify-center [--lane:var(--muted-foreground)] sm:size-7"
                 >
-                    <RailDot />
+                    <span ref={dotRef} className="flex">
+                        <RailDot />
+                    </span>
                 </span>
                 {thread.isLoading ? (
                     <span role="status">Loading replies…</span>
@@ -807,8 +972,9 @@ function MoreRepliesButton({
                         aria-disabled={thread.isLoading}
                         className="shrink-0 rounded-md px-2 py-0.5 tabular-nums transition-colors [overflow-anchor:none] hover:bg-accent hover:text-foreground aria-disabled:pointer-events-none"
                         data-test="all-replies-button"
+                        title={exactCountTitle(thread.remaining)}
                     >
-                        Show all {thread.remaining}
+                        Show all {formatCount(thread.remaining)}
                     </button>
                 </>
             )}
@@ -816,20 +982,35 @@ function MoreRepliesButton({
     );
 }
 
+type ReplyGraph = { after?: string; parent?: string };
+
+/** A reply avatar's ring is a 2px ring, 2px away from the picture. */
+const replyRing = 4;
+
 function ReplyItem({
     reply,
     parent,
     depth,
     links,
+    graph,
     onDeleted,
 }: {
     reply: ThreadCommit;
     parent: ThreadCommit;
     depth: number;
     links: ReactNode;
+    graph: ReplyGraph;
     onDeleted: () => void;
 }) {
     const thread = useThread(reply);
+    const nodeRef = useGraphNode({
+        id: useGraphNodeId()(reply.id),
+        lane: laneOf(reply),
+        dashed: true,
+        dimmed: useGraphDimmed(),
+        ring: isDeleted(reply) ? 0 : replyRing,
+        ...graph,
+    });
 
     if (isDeleted(reply)) {
         return (
@@ -842,6 +1023,7 @@ function ReplyItem({
                 <div className="flex gap-2 sm:gap-2.5">
                     <div className="relative shrink-0">
                         <span
+                            ref={nodeRef}
                             aria-hidden
                             className="block size-6 rounded-full border-2 border-dashed border-rail sm:size-7"
                         />
@@ -873,6 +1055,7 @@ function ReplyItem({
             depth={depth}
             links={links}
             thread={thread}
+            nodeRef={nodeRef}
             onDeleted={onDeleted}
         />
     );
@@ -884,6 +1067,7 @@ function CommitReply({
     depth,
     links,
     thread,
+    nodeRef,
     onDeleted,
 }: {
     reply: Commit;
@@ -891,6 +1075,7 @@ function CommitReply({
     depth: number;
     links: ReactNode;
     thread: Thread;
+    nodeRef: (element: HTMLElement | null) => void;
     onDeleted: () => void;
 }) {
     const { auth } = usePage().props;
@@ -905,6 +1090,14 @@ function CommitReply({
     const updateCommitsCount = useCommitsCountUpdate();
 
     const avatarRef = useRef<HTMLAnchorElement>(null);
+    // A stable ref, so the node stays registered across renders, like hover dimming its lane.
+    const avatarNodeRef = useCallback(
+        (element: HTMLAnchorElement | null) => {
+            avatarRef.current = element;
+            nodeRef(element);
+        },
+        [nodeRef],
+    );
 
     const isOwn = reply.user_id === auth.user?.id;
     const isFlattened = depth > maxIndentDepth;
@@ -961,7 +1154,7 @@ function CommitReply({
                 <div className="relative shrink-0">
                     <UserPreview user={reply.user} anchor={avatarRef}>
                         <Link
-                            ref={avatarRef}
+                            ref={avatarNodeRef}
                             href={show(reply.user)}
                             className="block rounded-full"
                         >
@@ -1169,6 +1362,7 @@ function ReplyComposer({
             images: File[];
             image_descriptions: string[];
             link_preview_url?: string;
+            commit_rules_accepted?: boolean;
         },
         CreatedReply
     >({
@@ -1177,9 +1371,10 @@ function ReplyComposer({
         image_descriptions: [],
     });
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const secrets = useSecretWarning(body);
+    const commitRules = useCommitRules();
     const isReplyable =
-        images.length > 0 || characterCount(body.trim()) >= minBodyLength;
+        (images.length > 0 || characterCount(body.trim()) >= minBodyLength) &&
+        bodyCharacterCount(body) <= maxBodyLength;
     const preview = useComposerPreview({
         body,
         textareaRef,
@@ -1225,7 +1420,7 @@ function ReplyComposer({
         if (
             request.processing ||
             attachments.isReading() ||
-            !secrets.beforeSubmit()
+            !commitRules.beforeSubmit()
         ) {
             return;
         }
@@ -1234,6 +1429,7 @@ function ReplyComposer({
             body,
             images,
             image_descriptions: descriptions,
+            commit_rules_accepted: commitRules.hasAccepted(),
             ...(linkCard.isChosen
                 ? { link_preview_url: linkCard.link ?? '' }
                 : {}),
@@ -1252,7 +1448,11 @@ function ReplyComposer({
                     onReplied(reply.parent);
                 },
                 onHttpException: (response) => {
-                    if (!commitNotFound(parent.id, response)) {
+                    const timeout = timeoutFrom(response.status, response.data);
+
+                    if (timeout) {
+                        showTimeout(timeout);
+                    } else if (!commitNotFound(parent.id, response)) {
                         toast.error(replyFailureMessage(response));
                     }
                 },
@@ -1281,6 +1481,7 @@ function ReplyComposer({
             <div className="grid">
                 <MentionTextarea
                     ref={textareaRef}
+                    reply={parent.id}
                     id={`reply-${parent.id}`}
                     name="body"
                     rows={1}
@@ -1290,7 +1491,7 @@ function ReplyComposer({
                     onKeyDown={onKeyDown}
                     onPaste={attachments.onPaste}
                     onFocus={isRestored ? moveCaretToEnd : undefined}
-                    maxLength={maxBodyLength}
+                    maxLength={maxRawBodyLength}
                     placeholder={`Reply to @${parent.user.username}`}
                     className={cn(
                         'col-start-1 row-start-1 block field-sizing-content max-h-[50dvh] min-h-9 w-full resize-none overflow-x-hidden overflow-y-auto bg-transparent px-1 text-base leading-relaxed outline-none placeholder:text-muted-foreground focus-visible:outline-none md:text-[15px]',
@@ -1319,16 +1520,7 @@ function ReplyComposer({
                     onRemove={attachments.remove}
                 />
             )}
-            <SecretWarning
-                body={body}
-                findings={secrets.findings}
-                textarea={textareaRef}
-                onChange={updateBody}
-                confirming={secrets.confirming}
-                onConfirmingChange={secrets.setConfirming}
-                onApprove={secrets.approve}
-                onEdit={preview.close}
-            />
+            <CommitRulesDialog rules={commitRules} textarea={textareaRef} />
             <InputError
                 message={attachments.error ?? imageErrorFrom(errors)}
                 className="mt-1 px-1"
