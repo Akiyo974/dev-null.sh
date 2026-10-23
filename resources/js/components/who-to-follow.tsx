@@ -398,17 +398,19 @@ function useHideWhoToFollow() {
 type TopUp = 'idle' | 'running' | 'queued';
 
 const dismissedIds = new Set<SuggestedUser['id']>();
+const followedIds = new Set<SuggestedUser['id']>();
 
 /**
  * The server sends a few spare suggestions after the shown ones, so a dismissed person's slot is taken by the next
  * spare right away while everyone else stays put. Someone followed from a row makes way the same way, with nothing
- * left to save. Once every dismissal is through, the spares are topped up from the
- * server, which only adds people after the ones already here. A dismissal that fails puts the person back in their
- * slot, unless a refresh has moved on to other people since.
+ * left to save. Once every dismissal is through, the spares are topped up from the server, which only adds people
+ * after the ones already here. A dismissal that fails puts the person back in their slot, unless a refresh has moved
+ * on to other people since.
  *
- * A top-up can be answered before someone else's dismissal is saved, so everyone dismissed or followed since the page
- * loaded is taken out again when it lands, and the next top-up follows. Visiting another page cancels a top-up, so it is sent
- * again once that page is shown.
+ * A top-up can be answered before someone else's dismissal is saved, so everyone dismissed since the page loaded is
+ * taken out again when it lands, and the next top-up follows. Someone followed is only taken out of top-ups sent
+ * before their follow: the server leaves them out of later ones while you follow them, and suggests them again once
+ * you don't. Visiting another page cancels a top-up, so it is sent again once that page is shown.
  *
  * The aside and the log share this state, so both say nobody is left once a top-up finds nobody else, until the next
  * page load leaves the block out like any other time there's nobody to suggest.
@@ -429,24 +431,32 @@ function useDismissSuggestion() {
     );
 
     const remove = (user: Pick<SuggestedUser, 'id'>): void => {
-        router.replaceProp('suggestedUsers', (current: SuggestedUser[]) => {
-            const slot = current.findIndex(
-                (suggested) => suggested.id === user.id,
-            );
+        // A page visited in the meantime may have no suggestions at all.
+        router.replaceProp(
+            'suggestedUsers',
+            (current: SuggestedUser[] | undefined) => {
+                if (current === undefined) {
+                    return current;
+                }
 
-            if (slot === -1) {
-                return current;
-            }
+                const slot = current.findIndex(
+                    (suggested) => suggested.id === user.id,
+                );
 
-            const remaining = [...current];
-            const spare =
-                slot < shownSuggestionsCount
-                    ? remaining.splice(shownSuggestionsCount, 1)
-                    : [];
-            remaining.splice(slot, 1, ...spare);
+                if (slot === -1) {
+                    return current;
+                }
 
-            return remaining;
-        });
+                const remaining = [...current];
+                const spare =
+                    slot < shownSuggestionsCount
+                        ? remaining.splice(shownSuggestionsCount, 1)
+                        : [];
+                remaining.splice(slot, 1, ...spare);
+
+                return remaining;
+            },
+        );
     };
 
     /**
@@ -477,6 +487,7 @@ function useDismissSuggestion() {
     };
 
     const sendTopUp = (): void => {
+        const followedBefore = [...followedIds];
         let isApplied = false;
 
         setTopUp('running');
@@ -486,7 +497,12 @@ function useDismissSuggestion() {
             onBeforeUpdate: () => {
                 isApplied = true;
             },
-            onSuccess: () => dismissedIds.forEach((id) => remove({ id })),
+            onSuccess: () => {
+                [...dismissedIds, ...followedIds].forEach((id) =>
+                    remove({ id }),
+                );
+                followedBefore.forEach((id) => followedIds.delete(id));
+            },
             onFinish: () => {
                 if (!isApplied) {
                     const stop = router.on('navigate', () => {
@@ -535,10 +551,13 @@ function useDismissSuggestion() {
     /**
      * Returns whether a spare takes the person's slot.
      */
-    const takeOut = (user: SuggestedUser): boolean => {
+    const takeOut = (
+        user: SuggestedUser,
+        takenOutIds: Set<SuggestedUser['id']>,
+    ): boolean => {
         const hasSpare = suggestedUsers.length > shownSuggestionsCount;
 
-        dismissedIds.add(user.id);
+        takenOutIds.add(user.id);
         setHasDismissed(true);
 
         if (hasSpare) {
@@ -546,7 +565,7 @@ function useDismissSuggestion() {
         } else {
             // Taken out after the row has folded away, even if the block it was dismissed from is no longer shown.
             window.setTimeout(() => {
-                if (dismissedIds.has(user.id)) {
+                if (takenOutIds.has(user.id)) {
                     remove(user);
                 }
             }, 300);
@@ -557,7 +576,7 @@ function useDismissSuggestion() {
 
     const follow = (user: SuggestedUser): boolean => {
         setDismissingCount((count) => count + 1);
-        const hasSpare = takeOut(user);
+        const hasSpare = takeOut(user, followedIds);
         settle();
 
         return hasSpare;
@@ -596,7 +615,7 @@ function useDismissSuggestion() {
             },
         });
 
-        return takeOut(user);
+        return takeOut(user, dismissedIds);
     };
 
     return {

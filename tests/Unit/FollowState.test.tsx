@@ -79,8 +79,10 @@ vi.doMock('@inertiajs/react', async () => ({
         },
         replaceProp: (
             _key: string,
-            update: (current: SuggestedUser[]) => SuggestedUser[],
-        ) => (suggestedUsers = update(suggestedUsers ?? [])),
+            update: (
+                current: SuggestedUser[] | undefined,
+            ) => SuggestedUser[] | undefined,
+        ) => (suggestedUsers = update(suggestedUsers)),
     },
 }));
 
@@ -749,4 +751,40 @@ test('following the last suggestion says nobody is left once a top-up finds nobo
     finishTopUp(reloads.at(-1)!);
 
     assert.equal(hasElementNamed(WhoToFollow(), 'WhoToFollowEmptied'), true);
+});
+
+test('someone followed and then unfollowed can be suggested again by a later top-up', () => {
+    const [abe, bea, cal, dee, eli] = suggestions('abe', 'bea', 'cal', 'dee', 'eli');
+    suggestedUsers = [abe, bea, cal, dee, eli];
+    timers.splice(0);
+
+    followSuggestion(bea);
+    timers.splice(0).forEach((timer) => timer());
+    finishTopUp(reloads.at(-1)!);
+
+    assert.deepEqual(shownSuggestions(), ['abe', 'dee', 'cal']);
+
+    dismissSuggestion(abe);
+    visits.at(-1)?.onSuccess?.();
+    visits.at(-1)?.onFinish?.();
+    suggestedUsers = [eli, dee, cal, bea];
+    finishTopUp(reloads.at(-1)!);
+
+    assert.deepEqual(
+        suggestedUsers.map((user) => user.id),
+        ['eli', 'dee', 'cal', 'bea'],
+    );
+});
+
+test('a follow whose row is gone by the time it makes way leaves a page without suggestions alone', () => {
+    const [fay, gil, hal, ida] = suggestions('fay', 'gil', 'hal', 'ida');
+    suggestedUsers = [fay, gil, hal, ida];
+    timers.splice(0);
+
+    followSuggestion(gil);
+    suggestedUsers = undefined;
+    timers.splice(0).forEach((timer) => timer());
+
+    assert.equal(suggestedUsers, undefined);
+    assert.deepEqual(reloads.at(-1)?.only, ['suggestedUsers']);
 });
