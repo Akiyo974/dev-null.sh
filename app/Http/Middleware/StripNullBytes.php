@@ -4,46 +4,29 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Services\NullBytes;
 use Closure;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * PostgreSQL text cannot hold a NUL byte and the database driver cuts a string at the first one, so whatever was typed
- * after it would be dropped without a word. Taking them out of every input keeps the rest of the text. The raw body
- * a signature covers is left as it was sent.
+ * Takes NUL bytes out of every request's inputs before anything reads them. Signed payloads that fill the request
+ * later go through the same cleaning where they are read.
  */
 final readonly class StripNullBytes
 {
+    public function __construct(private NullBytes $nullBytes)
+    {
+        //
+    }
+
     /**
      * @param  Closure(Request): (Response)  $next
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $this->strip($request->query);
-        $this->strip($request->isJson() ? $request->json() : $request->request);
+        $this->nullBytes->strip($request);
 
         return $next($request);
-    }
-
-    private function strip(ParameterBag $inputs): void
-    {
-        $inputs->replace($this->clean($inputs->all()));
-    }
-
-    /**
-     * @template TKey of array-key
-     *
-     * @param  array<TKey, mixed>  $values
-     * @return array<TKey, mixed>
-     */
-    private function clean(array $values): array
-    {
-        return array_map(fn (mixed $value): mixed => match (true) {
-            is_string($value) => str_replace("\0", '', $value),
-            is_array($value) => $this->clean($value),
-            default => $value,
-        }, $values);
     }
 }
