@@ -31,10 +31,39 @@ final readonly class UpstreamContributorsQuery
 
     /**
      * Cached for an hour. When GitHub doesn't answer, the last list it gave is used, and asked for again a minute later.
+     * Only one request refreshes the list at a time: the others keep the last list meanwhile instead of all asking
+     * GitHub at once.
      *
      * @return list<string>
      */
     private function ids(): array
+    {
+        /** @var list<string>|null $ids */
+        $ids = Cache::get(self::Key);
+
+        if ($ids !== null) {
+            return $ids;
+        }
+
+        /** @var list<string>|false $refreshed */
+        $refreshed = Cache::lock(self::Key.':refresh', 30)->get($this->refresh(...));
+
+        if ($refreshed !== false) {
+            return $refreshed;
+        }
+
+        /** @var list<string> $last */
+        $last = Cache::get(self::Key.':last', []);
+
+        return $last;
+    }
+
+    /**
+     * Another request may have refreshed the list while this one waited for its turn, so the cache is read again first.
+     *
+     * @return list<string>
+     */
+    private function refresh(): array
     {
         /** @var list<string>|null $ids */
         $ids = Cache::get(self::Key);

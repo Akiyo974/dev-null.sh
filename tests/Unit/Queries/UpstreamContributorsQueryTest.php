@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use App\Models\User;
 use App\Queries\UpstreamContributorsQuery;
+use Illuminate\Cache\Events\CacheMissed;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -82,4 +85,29 @@ it('has nobody when github has never answered', function (): void {
     ]);
 
     expect(resolve(UpstreamContributorsQuery::class)->includes(User::factory()->create()))->toBeFalse();
+});
+
+it('keeps the last known contributors without asking github while another request refreshes them', function (): void {
+    $contributor = User::factory()->create(['github_id' => '123']);
+    Cache::put('upstream-contributors:last', ['123']);
+    Cache::lock('upstream-contributors:refresh', 30)->get();
+    Http::fake();
+
+    expect(resolve(UpstreamContributorsQuery::class)->includes($contributor))->toBeTrue();
+
+    Http::assertNothingSent();
+});
+
+it('uses the list another request refreshed while it waited for its turn', function (): void {
+    $contributor = User::factory()->create(['github_id' => '123']);
+    Http::fake();
+
+    // Another request finishes its refresh just after this one found the list missing.
+    Event::listen(CacheMissed::class, function (CacheMissed $event): void {
+        Cache::put($event->key, ['123'], 60);
+    });
+
+    expect(resolve(UpstreamContributorsQuery::class)->includes($contributor))->toBeTrue();
+
+    Http::assertNothingSent();
 });
