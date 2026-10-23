@@ -48,6 +48,21 @@ it('renders a user profile', function (): void {
             ->where('commits.data.1.body', 'Older'));
 });
 
+it('only lets guests see the local time of users who opted in', function (): void {
+    User::factory()->create(['username' => 'shared', 'timezone' => 'Europe/Berlin', 'show_local_time' => true]);
+    User::factory()->create(['username' => 'private', 'timezone' => 'Europe/Berlin']);
+
+    $this->get('/@shared')
+        ->assertInertia(fn (AssertableInertia $page): AssertableInertia => $page
+            ->where('user.timezone', 'Europe/Berlin')
+            ->where('user.show_local_time', true));
+
+    $this->get('/@private')
+        ->assertInertia(fn (AssertableInertia $page): AssertableInertia => $page
+            ->where('user.timezone', 'Europe/Berlin')
+            ->where('user.show_local_time', false));
+});
+
 it('renders whether the user can be sponsored on github', function (): void {
     $user = User::factory()->create(['has_sponsors_listing' => true]);
 
@@ -344,7 +359,6 @@ it('shows guests the profile with its approved commits and a link preview', func
             ->where('isMuting', false)
             ->has('commits.data', 1)
             ->where('commits.data.0.body', 'A commit everyone may read')
-            ->where('commits.data.0.is_saved', false)
             ->where('streaks.longest', 1)
             ->has('activity'))
         ->assertSee('<title>The Octocat (@octocat) on /dev/null</title>', false)
@@ -657,7 +671,7 @@ it('preloads only replies visible to the profile visitor', function (): void {
     $viewer->muting()->attach($muted);
     $blocked->blocking()->attach($viewer);
     $parent = Commit::factory()->for($author)->create();
-    Commit::factory()->for($parent, 'parent')->create(['created_at' => now()->subMinutes(2)]);
+    $visible = Commit::factory()->for($parent, 'parent')->create(['created_at' => now()->subMinutes(2)]);
     $ownPending = Commit::factory()->for($parent, 'parent')->for($viewer)->pending()->create(['created_at' => now()->subMinute()]);
     Commit::factory()->for($parent, 'parent')->pending()->create();
     Commit::factory()->for($parent, 'parent')->rejected()->create();
@@ -668,8 +682,10 @@ it('preloads only replies visible to the profile visitor', function (): void {
     $this->actingAs($viewer)->get(route('user.show', $author))
         ->assertOk()->assertInertia(fn ($page) => $page
         ->where('commits.data.0.replies_count', 2)
+        ->has('commits.data.0.reply_preview.data', 2)
         ->where('commits.data.0.reply_preview.data.0.id', $ownPending->id)
-        ->where('commits.data.0.reply_preview.next_cursor', fn (string $cursor): bool => $cursor !== '')
+        ->where('commits.data.0.reply_preview.data.1.id', $visible->id)
+        ->where('commits.data.0.reply_preview.next_cursor', null)
         ->missing('commits.data.0.reply_preview.data.0.user.email'));
 });
 

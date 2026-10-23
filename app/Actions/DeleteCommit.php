@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Actions;
 
 use App\Enums\NotificationType;
-use App\Jobs\EraseDeletedCommitImages;
+use App\Jobs\EraseDeletedCommit;
 use App\Models\Commit;
 use App\Models\Notification;
+use App\Services\CommitTranslations;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 final readonly class DeleteCommit
@@ -21,7 +23,7 @@ final readonly class DeleteCommit
      * Soft deleting keeps the row for its replies and quotes, so its notifications, the notifications about its replies and
      * quotes are removed here instead of by the foreign key, one indexed query each.
      * Reports stay so deleting a commit cannot clear its author's moderation hold.
-     * Its images are kept until the undo window closes, so undoing the deletion brings them back too.
+     * Its content and images are kept until the undo window closes, so undoing the deletion brings them back too.
      */
     public function handle(Commit $commit): Commit
     {
@@ -38,9 +40,11 @@ final readonly class DeleteCommit
 
             $commit->delete();
 
+            Cache::forget(resolve(CommitTranslations::class)->key($commit));
+
             $this->updateCommitHotScores->handle([$commit->id]);
 
-            dispatch(new EraseDeletedCommitImages($commit))
+            dispatch(new EraseDeletedCommit($commit))
                 ->delay(now()->addSeconds(Commit::RESTORABLE_SECONDS))
                 ->afterCommit();
 

@@ -92,7 +92,8 @@ export default function Index({
                 }
             />
 
-            <div className="flex min-h-0 bg-card max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-(--mobile-nav-height,4.5rem) md:h-svh">
+            {/* On phones the open keyboard scrolls the page under it, so the chat follows what is still visible. */}
+            <div className="flex min-h-0 bg-card max-md:fixed max-md:inset-x-0 max-md:top-[max(3.5rem,var(--visual-viewport-top,0px))] max-md:bottom-[max(var(--mobile-nav-height,4.5rem),var(--visual-viewport-bottom,0px))] md:h-svh max-md:[:root[data-keyboard-open]_&]:bottom-(--visual-viewport-bottom)">
                 <section
                     aria-label="Conversations"
                     className={cn(
@@ -139,7 +140,7 @@ export default function Index({
                                         type="button"
                                         aria-label="New org"
                                         onClick={() => setIsStartingOrg(true)}
-                                        className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                        className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                                         data-test="new-org"
                                     >
                                         <UsersRound className="size-[18px]" />
@@ -153,7 +154,7 @@ export default function Index({
                                         type="button"
                                         aria-label="New remote"
                                         onClick={() => setIsPicking(true)}
-                                        className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                        className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                                         data-test="new-message"
                                     >
                                         <SquarePen className="size-[18px]" />
@@ -240,7 +241,7 @@ function BackToRemotes() {
         <Link
             href={ConversationController.index()}
             aria-label="All remotes"
-            className="-ml-2 grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+            className="-ml-2 grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
         >
             <ChevronLeft className="size-5" />
         </Link>

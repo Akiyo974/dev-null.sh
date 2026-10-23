@@ -5,16 +5,29 @@ import { createPortal } from 'react-dom';
 import UserFollowController from '@/actions/App/Http/Controllers/UserFollowController';
 import UserFollowersController from '@/actions/App/Http/Controllers/UserFollowersController';
 import UserFollowingController from '@/actions/App/Http/Controllers/UserFollowingController';
-import { FollowLabel, useFollowHover } from '@/components/follow-button';
+import { BioText } from '@/components/bio-text';
+import {
+    FollowLabel,
+    followVisitOptions,
+    onFollowHttpException,
+    useFollowHover,
+    useIsFollowing,
+} from '@/components/follow-button';
+import {
+    LiveAvatarMarker,
+    LiveStreamCard,
+} from '@/components/live-stream-card';
 import { Button } from '@/components/ui/button';
 import { UserAvatar } from '@/components/user-avatar';
 import { UserSafetyMenu } from '@/components/user-safety-menu';
+import { signIn } from '@/lib/auth';
+import { exactCountTitle, formatCount } from '@/lib/numbers';
 import { toastWhenThrottled } from '@/lib/throttle';
-import { laneColor } from '@/lib/utils';
+import { cn, laneColor } from '@/lib/utils';
 import { preview } from '@/routes/mention';
 import { show } from '@/routes/user';
 import { show as userPreview } from '@/routes/user-preview';
-import type { Profile, User } from '@/types';
+import type { Commit, CursorPaginated, Profile, User } from '@/types';
 
 type PreviewData = {
     isFollowing: boolean;
@@ -273,7 +286,7 @@ export function UserPreview({
                             scheduleClose();
                         }}
                         data-state={isOpen ? 'open' : 'closed'}
-                        className="fixed z-50 w-76 rounded-xl border bg-popover p-4 text-popover-foreground shadow-[0_12px_32px_-12px_rgb(0_0_0/0.35)] ease-spring data-[state=closed]:scale-70 data-[state=closed]:opacity-0 data-[state=closed]:ease-in motion-safe:transition-[opacity,scale] motion-safe:duration-560 motion-safe:data-[state=closed]:duration-160 starting:scale-70 starting:opacity-0"
+                        className="pointer-events-auto fixed z-50 w-76 rounded-lg border bg-popover p-4 text-popover-foreground shadow-[0_12px_32px_-12px_rgb(0_0_0/0.35)] ease-spring data-[state=closed]:scale-70 data-[state=closed]:opacity-0 data-[state=closed]:ease-in motion-safe:transition-[opacity,scale] motion-safe:duration-560 motion-safe:data-[state=closed]:duration-160 starting:scale-70 starting:opacity-0"
                         style={{
                             ...position,
                             transformOrigin: anchor
@@ -316,43 +329,66 @@ function UserPreviewContent({
     onChange: (data: PreviewData) => void;
     onMenuOpenChange: (isOpen: boolean) => void;
 }) {
-    const { auth } = usePage().props;
+    const {
+        component,
+        props: { auth, log, commits },
+    } = usePage<{ commits?: CursorPaginated<Commit> }>();
     const isCurrentUser = auth.user?.id === user.id;
     const lane = laneColor(user.lane);
 
     const { isJustToggled, markToggled, onMouseLeave } = useFollowHover();
+    const [isFollowing, setIsFollowing] = useIsFollowing(
+        user,
+        data?.isFollowing ?? false,
+    );
 
+    const [pendingFollows, setPendingFollows] = useState<boolean | null>(null);
+    const shownIsFollowing = pendingFollows ?? isFollowing;
+
+    /**
+     * The button flips right away, but like every other follow control the shared state only changes once the server confirms, so there is nothing to roll back.
+     */
     const toggleFollow = () => {
-        if (!data || data.isUnavailable) {
+        if (auth.user === null) {
+            signIn();
+
             return;
         }
 
-        const previous = data;
-        const isFollowing = !data.isFollowing;
+        if (!data || data.isUnavailable || pendingFollows !== null) {
+            return;
+        }
 
-        onChange({
-            ...data,
-            isFollowing,
-            user: {
-                ...data.user,
-                followers_count:
-                    data.user.followers_count + (isFollowing ? 1 : -1),
-            },
-        });
+        const follows = !isFollowing;
+        setPendingFollows(follows);
 
         router.visit(
-            isFollowing
+            follows
                 ? UserFollowController.store(user)
                 : UserFollowController.destroy(user),
             {
                 preserveScroll: true,
                 preserveState: true,
-                onError: () => onChange(previous),
-                onHttpException: (response) => {
-                    onChange(previous);
-
-                    return !toastWhenThrottled(response);
+                async: true,
+                ...followVisitOptions(component, log, commits),
+                onSuccess: () => {
+                    setIsFollowing(follows);
+                    router.flushAll();
+                    onChange({
+                        ...data,
+                        isFollowing: follows,
+                        user: {
+                            ...data.user,
+                            followers_count:
+                                data.user.followers_count +
+                                Number(follows) -
+                                Number(data.isFollowing),
+                        },
+                    });
                 },
+                onHttpException: (response) =>
+                    onFollowHttpException(user, response),
+                onFinish: () => setPendingFollows(null),
             },
         );
     };
@@ -360,11 +396,15 @@ function UserPreviewContent({
     return (
         <div style={{ '--lane': lane } as CSSProperties}>
             <div className="flex items-start justify-between gap-3">
-                <Link href={show(user)} className="rounded-full">
+                <Link href={show(user)} className="relative rounded-full">
                     <UserAvatar
                         user={user}
-                        className="size-14 text-lg ring-2 ring-(--lane) ring-offset-2 ring-offset-popover"
+                        className={cn(
+                            'size-14 text-lg ring-2 ring-(--lane) ring-offset-2 ring-offset-popover',
+                            { 'ring-red-600': user.live },
+                        )}
                     />
+                    {user.live && <LiveAvatarMarker className="ring-popover" />}
                 </Link>
 
                 {!isCurrentUser &&
@@ -383,7 +423,7 @@ function UserPreviewContent({
                                 <Button
                                     size="sm"
                                     variant={
-                                        data.isFollowing ? 'outline' : 'default'
+                                        shownIsFollowing ? 'outline' : 'default'
                                     }
                                     className="group/follow min-w-24"
                                     onClick={() => {
@@ -392,14 +432,15 @@ function UserPreviewContent({
                                     }}
                                     onMouseLeave={onMouseLeave}
                                     aria-label={
-                                        data.isFollowing
+                                        shownIsFollowing
                                             ? `Unfollow @${user.username}`
                                             : `Follow @${user.username}`
                                     }
+                                    aria-busy={pendingFollows !== null}
                                     data-test="user-preview-follow-button"
                                 >
                                     <FollowLabel
-                                        isFollowing={data.isFollowing}
+                                        isFollowing={shownIsFollowing}
                                         isJustToggled={isJustToggled}
                                     />
                                 </Button>
@@ -423,12 +464,12 @@ function UserPreviewContent({
                 />
                 <span className="truncate">@{user.username}</span>
                 {data?.followsYou && (
-                    <span className="ml-1 shrink-0 rounded bg-muted px-1.5 py-0.5 font-sans text-xs">
+                    <span className="ml-1 shrink-0 rounded-sm bg-muted px-1.5 py-0.5 font-sans text-xs">
                         Follows you
                     </span>
                 )}
                 {data?.isMuting && (
-                    <span className="ml-1 shrink-0 rounded bg-muted px-1.5 py-0.5 font-sans text-xs">
+                    <span className="ml-1 shrink-0 rounded-sm bg-muted px-1.5 py-0.5 font-sans text-xs">
                         Muted
                     </span>
                 )}
@@ -436,7 +477,7 @@ function UserPreviewContent({
 
             {user.bio && !data?.isUnavailable && (
                 <p className="mt-2 line-clamp-3 text-sm text-pretty">
-                    {user.bio}
+                    <BioText bio={user.bio} />
                 </p>
             )}
 
@@ -450,8 +491,11 @@ function UserPreviewContent({
                 ) : data ? (
                     <>
                         <span>
-                            <span className="font-mono font-medium">
-                                {data.user.commits_count}
+                            <span
+                                className="font-mono font-medium"
+                                title={exactCountTitle(data.user.commits_count)}
+                            >
+                                {formatCount(data.user.commits_count)}
                             </span>{' '}
                             <span className="text-muted-foreground">
                                 {data.user.commits_count === 1
@@ -463,8 +507,13 @@ function UserPreviewContent({
                             href={UserFollowingController.index(user)}
                             className="hover:underline"
                         >
-                            <span className="font-mono font-medium">
-                                {data.user.following_count}
+                            <span
+                                className="font-mono font-medium"
+                                title={exactCountTitle(
+                                    data.user.following_count,
+                                )}
+                            >
+                                {formatCount(data.user.following_count)}
                             </span>{' '}
                             <span className="text-muted-foreground">
                                 following
@@ -474,8 +523,13 @@ function UserPreviewContent({
                             href={UserFollowersController.index(user)}
                             className="hover:underline"
                         >
-                            <span className="font-mono font-medium">
-                                {data.user.followers_count}
+                            <span
+                                className="font-mono font-medium"
+                                title={exactCountTitle(
+                                    data.user.followers_count,
+                                )}
+                            >
+                                {formatCount(data.user.followers_count)}
                             </span>{' '}
                             <span className="text-muted-foreground">
                                 {data.user.followers_count === 1
@@ -485,9 +539,15 @@ function UserPreviewContent({
                         </Link>
                     </>
                 ) : (
-                    <span className="my-0.5 h-4 w-48 rounded bg-muted-foreground/15 motion-safe:animate-pulse" />
+                    <span className="my-0.5 h-4 w-48 rounded-sm bg-muted-foreground/15 motion-safe:animate-pulse" />
                 )}
             </div>
+
+            {user.live && !data?.isUnavailable && (
+                <div className="mt-4 border-t pt-4">
+                    <LiveStreamCard user={user} stream={user.live} />
+                </div>
+            )}
         </div>
     );
 }

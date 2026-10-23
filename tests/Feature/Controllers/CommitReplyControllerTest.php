@@ -7,6 +7,7 @@ use App\Actions\CreateTomReply;
 use App\Actions\DeleteUser;
 use App\Ai\Agents\Tom;
 use App\Enums\CommitStatus;
+use App\Jobs\DetectCommitLanguage;
 use App\Jobs\ReplyAsTom;
 use App\Jobs\UnfurlLink;
 use App\Models\Commit;
@@ -14,13 +15,15 @@ use App\Models\LinkPreview;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Sequence;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 
 it('answers a casual public Tom mention in the same thread', function (): void {
-    config(['app.admins' => ['alice', 'tom'], 'ai.providers.opencode.key' => 'test']);
-    Queue::fake([ReplyAsTom::class]);
+    config(['app.admins' => ['alice', 'tom'], 'ai.providers.opencode.key' => 'test', 'ai.providers.openai.key' => 'test']);
+    Queue::fake([ReplyAsTom::class, DetectCommitLanguage::class]);
     Tom::fake(['A little rusty, but happy to see you. :-D'])->preventStrayPrompts();
+    Http::fake(['api.openai.com/v1/decisions' => Http::response(['answers' => []])]);
     $tom = User::factory()->create(['username' => 'tom', 'github_id' => CreateTomFriendship::GITHUB_ID]);
     $user = User::factory()->create(['username' => 'alice']);
     $parent = Commit::factory()->create();
@@ -36,6 +39,7 @@ it('answers a casual public Tom mention in the same thread', function (): void {
         ->assertJsonPath('data.0.user.id', $tom->id)
         ->assertJsonPath('data.0.root_id', $parent->id);
     Tom::assertPrompted('@tom how are your rusty joints?');
+    Http::assertSentCount(1);
 });
 
 it('rejects non-text reply bodies with a validation error', function (mixed $body): void {
@@ -237,8 +241,7 @@ it('lists only approved replies to guests', function (): void {
 
     $response->assertOk()
         ->assertJsonCount(1, 'data')
-        ->assertJsonPath('data.0.body', 'Approved')
-        ->assertJsonPath('data.0.is_saved', false);
+        ->assertJsonPath('data.0.body', 'Approved');
 });
 
 it('returns not found to guests for the replies of a commit that is not approved', function (): void {
@@ -305,6 +308,7 @@ it('may reply to a commit', function (): void {
     $response->assertCreated()
         ->assertExactJson([
             'committed' => ['id' => $reply->id, 'body' => 'Agreed, ship it.'],
+            'parent' => ['id' => $parent->id, 'replies_count' => 1, 'continuation_id' => null],
             'toast' => [
                 'type' => 'info',
                 'message' => 'Your commit is pending review. Everyone will see it once it is approved.',
@@ -313,6 +317,22 @@ it('may reply to a commit', function (): void {
 
     expect($reply->parent_id)->toBe($parent->id)
         ->and($reply->status)->toBe(CommitStatus::Pending);
+});
+
+it('continues the author thread with their first reply to their own commit, leaving it out of the reply count', function (): void {
+    $author = User::factory()->create();
+    $commit = Commit::factory()->for($author)->create();
+    Commit::factory()->for($commit, 'parent')->create();
+
+    $first = $this->actingAs($author)->postJson(route('commit-reply.store', $commit), ['body' => 'Part two']);
+    $continuation = $author->commits()->where('body', 'Part two')->sole();
+
+    $first->assertCreated()
+        ->assertJsonPath('parent', ['id' => $commit->id, 'replies_count' => 1, 'continuation_id' => $continuation->id]);
+
+    $this->actingAs($author)->postJson(route('commit-reply.store', $commit), ['body' => 'An aside'])
+        ->assertCreated()
+        ->assertJsonPath('parent', ['id' => $commit->id, 'replies_count' => 2, 'continuation_id' => $continuation->id]);
 });
 
 it('publishes replies of admins right away', function (): void {
@@ -370,7 +390,7 @@ it('may not reply to a commit that does not exist', function (): void {
     expect(Commit::query()->count())->toBe(0);
 });
 
-it('requires a reply body of 3 to 4,000 characters', function (string $body): void {
+it('requires a reply body of 1 to 4,000 characters', function (string $body): void {
     $parent = Commit::factory()->create();
 
     $this->actingAs(User::factory()->create())
@@ -381,7 +401,6 @@ it('requires a reply body of 3 to 4,000 characters', function (string $body): vo
     expect($parent->replies()->count())->toBe(0);
 })->with([
     'blank' => '   ',
-    'too short' => '  ab  ',
     'too long' => str_repeat('a', 4001),
 ]);
 
@@ -932,3 +951,20 @@ it('lists the newest reply with a cursor to older replies when requested', funct
     $second->assertOk()->assertJsonCount(3, 'data')->assertJsonPath('next_cursor', null);
     expect($second->json('data.*.id'))->toBe(array_slice($expected, 1));
 });
+
+it('lists replies in pages of any size up to 50', function (int $limit, int $status): void {
+    $parent = Commit::factory()->create();
+    Commit::factory()->for($parent, 'parent')->count(4)->create();
+
+    $response = $this->getJson(route('commit-reply.index', [$parent, 'limit' => $limit]))->assertStatus($status);
+
+    if ($status === 200) {
+        $response->assertJsonCount(min($limit, 4), 'data');
+    }
+})->with([
+    'a single reply' => [1, 200],
+    'a few' => [3, 200],
+    'the most' => [50, 200],
+    'none' => [0, 422],
+    'too many' => [51, 422],
+]);

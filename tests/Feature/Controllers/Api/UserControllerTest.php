@@ -93,6 +93,7 @@ it('shows a signed request the profile as the web shows it to its user', functio
         'company' => '@github',
         'location' => 'San Francisco',
         'website' => 'https://github.blog',
+        'pasteis_received' => 7,
     ]);
 
     Commit::factory()->for($user)->count(2)->create();
@@ -127,13 +128,15 @@ it('shows a signed request the profile as the web shows it to its user', functio
             'is_following' => true,
             'follows_you' => false,
             'is_muting' => false,
+            'pasteis_received' => 7,
             'activity' => resolve(UserActivityQuery::class)->get($user, $viewer),
             'streaks' => ['longest' => 1, 'current' => 1],
             'achievements' => resolve(UserAchievementsQuery::class)->get($user, $viewer),
             'pinned_commit' => null,
         ])
-        ->assertJsonPath('achievements.rank', 'user')
-        ->assertJsonPath('achievements.level', 1)
+        ->assertJsonPath('achievements.rank', 'daemon')
+        ->assertJsonPath('achievements.level', 2)
+        ->assertJsonPath('achievements.xp', 145)
         ->assertJsonPath('activity.scale', 'week')
         ->assertJsonCount(7, 'activity.buckets')
         ->assertJsonPath('activity.buckets.3', ['date' => '2026-10-12', 'count' => 1])
@@ -262,10 +265,16 @@ it('tells a signed request it blocked the profile, as the web does', function ()
 
     signedApiRequest($keyPair, 'GET', route('api-user.show', $user))
         ->assertForbidden()
-        ->assertExactJson([
-            'message' => "You blocked The Octocat. Neither of you can follow, reply to, or star the other, or see each other's commits.",
-            'code' => 'user_blocked',
-        ]);
+        ->assertJsonPath('message', "You blocked The Octocat. Neither of you can follow, reply to, or star the other, or see each other's commits.")
+        ->assertJsonPath('code', 'user_blocked')
+        // Who they blocked, as the web shows them on the blocked profile.
+        ->assertJsonPath('user.id', $user->id)
+        ->assertJsonPath('user.username', $user->username)
+        ->assertJsonPath('user.name', 'The Octocat')
+        ->assertJsonPath('user.avatar_url', $user->avatar_url)
+        ->assertJsonPath('user.lane', $user->lane())
+        ->assertJsonMissingPath('user.followers_count')
+        ->assertJsonMissingPath('data');
 
     $this->getJson(route('api-user.show', $user))
         ->assertOk()

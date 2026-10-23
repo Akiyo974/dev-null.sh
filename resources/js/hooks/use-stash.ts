@@ -1,20 +1,21 @@
 import type { FocusEvent } from 'react';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import {
     maxImages,
     pickImages,
     revokeObjectUrls,
 } from '@/components/commit-image-picker';
+import { cancelImageRead, cancelImageReads } from '@/lib/draft-image-reads';
 import type { StoredImages } from '@/lib/image-storage';
 import {
     deleteStoredImages,
     readStoredImages,
     writeStoredImages,
 } from '@/lib/image-storage';
-import { stashableBody } from '@/lib/sensitive-text';
 import { readStorage, storedKeys, writeStorage } from '@/lib/storage';
 
 export type UseStashReturn = {
+    readonly key: string;
     readonly body: string;
     readonly images: File[];
     readonly descriptions: string[];
@@ -103,7 +104,7 @@ const subscribe = (callback: () => void) => {
 
 const flush = (): void => {
     clearTimeout(timeout);
-    pending.forEach((body, key) => writeStorage(key, stashableBody(body)));
+    pending.forEach((body, key) => writeStorage(key, body));
     pending.clear();
     notify();
 };
@@ -168,6 +169,7 @@ export function discardSeriesStash(userId: string): void {
 
 export function clearStashes(userId: string): void {
     const prefix = prefixFor(userId);
+    cancelImageReads(prefix);
 
     [...pending.keys(), ...storedKeys()]
         .filter((key) => key.startsWith(prefix))
@@ -211,12 +213,6 @@ export function useStash(userId: string, name: string): UseStashReturn {
         () => body !== '' || draftImages.length > 0,
     );
 
-    useEffect(() => {
-        if (body !== '' && stashableBody(body) === '') {
-            discardBody(key);
-        }
-    }, [body, key]);
-
     const updateBody = (next: string): void => {
         setBody(next);
 
@@ -230,11 +226,7 @@ export function useStash(userId: string, name: string): UseStashReturn {
             return;
         }
 
-        if (stashableBody(next) === '') {
-            discardBody(key);
-        } else {
-            schedule(key, next);
-        }
+        schedule(key, next);
     };
 
     const updateImages = (next: File[], descriptions: string[] = []): void => {
@@ -246,6 +238,7 @@ export function useStash(userId: string, name: string): UseStashReturn {
     };
 
     const drop = (): void => {
+        cancelImageRead(key);
         setBody('');
         setIsDraftRestored(false);
         discardBody(key);
@@ -253,6 +246,7 @@ export function useStash(userId: string, name: string): UseStashReturn {
     };
 
     return {
+        key,
         body,
         images: draftImages,
         descriptions,

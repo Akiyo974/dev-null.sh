@@ -26,6 +26,7 @@ vi.doMock('react', () => ({
               : initial,
         (value: unknown) => stateChanges.push(value),
     ],
+    useSyncExternalStore: (_subscribe: unknown, read: () => unknown) => read(),
 }));
 vi.doMock('react-dom', async () => ({
     ...(await vi.importActual('react-dom')),
@@ -33,6 +34,10 @@ vi.doMock('react-dom', async () => ({
 }));
 
 const { GraphRail } = await import('../../resources/js/components/graph-rail');
+const { UserAvatar } =
+    await import('../../resources/js/components/user-avatar');
+const { ActorAvatar } =
+    await import('../../resources/js/pages/notification/index');
 const { UserPreview } =
     await import('../../resources/js/components/user-preview');
 const { SuggestedUserRow } =
@@ -180,23 +185,61 @@ test('suggested user row wraps the author in a user preview anchored to their av
         avatar_url: null,
         lane: 1,
         timezone: null,
+        show_local_time: false,
         followed_by_following_count: 15,
         followers_count: 20,
     } as SuggestedUser;
 
-    const row = SuggestedUserRow({ user }) as ReactElement<{
-        children: ReactNode;
-    }>;
-    assert.ok(React.isValidElement(row));
-
-    const children = React.Children.toArray(row.props.children);
-    const preview = children[0] as ReactElement<{
+    type PreviewProps = {
         user: SuggestedUser;
         anchor: React.RefObject<HTMLSpanElement | null>;
-    }>;
+        children?: ReactNode;
+    };
+    const findPreview = (
+        node: ReactNode,
+    ): ReactElement<PreviewProps> | undefined =>
+        React.Children.toArray(node)
+            .filter((child) => React.isValidElement<PreviewProps>(child))
+            .map((child) =>
+                child.type === UserPreview
+                    ? child
+                    : findPreview(child.props.children),
+            )
+            .find(Boolean);
 
-    assert.equal(preview.type, UserPreview);
+    const preview = findPreview(SuggestedUserRow({ user }));
+    assert.ok(preview);
+
     assert.deepEqual(preview.props.user, user);
     assert.ok(preview.props.anchor);
 });
 
+const actor = {
+    id: 'actor',
+    name: 'Actor',
+    username: 'actor',
+    avatar_url: null,
+    lane: 1,
+} as User;
+
+type ActorPreview = ReactElement<{
+    user: User;
+    anchor: React.RefObject<HTMLSpanElement | null>;
+    children: ReactElement<{
+        ref: React.RefObject<HTMLSpanElement | null>;
+        children: ReactElement<{ user: User }>;
+    }>;
+}>;
+
+test('notification actor avatar previews the actor around the avatar it anchors', () => {
+    const anchor = { current: null };
+    const preview = ActorAvatar({ user: actor, anchor }) as ActorPreview;
+    const avatar = preview.props.children;
+
+    assert.equal(preview.type, UserPreview);
+    assert.equal(preview.props.user, actor);
+    assert.equal(preview.props.anchor, anchor);
+    assert.equal(avatar.props.ref, anchor);
+    assert.equal(avatar.props.children.type, UserAvatar);
+    assert.equal(avatar.props.children.props.user, actor);
+});

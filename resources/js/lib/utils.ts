@@ -1,10 +1,16 @@
 import type { InertiaLinkProps } from '@inertiajs/react';
 import type { ClassValue } from 'clsx';
 import { clsx } from 'clsx';
+import type { CSSProperties } from 'react';
 import { flushSync } from 'react-dom';
 import { twMerge } from 'tailwind-merge';
 import type { DeletedCommit, Lane, ThreadCommit } from '@/types';
-import type { FlashToast } from '@/types/ui';
+import type { FlashToast, TimeoutFlash } from '@/types/ui';
+
+/**
+ * The interface is in English, so month and weekday names are too, whatever the browser's language.
+ */
+export const dateLocale = 'en-US';
 
 export function characterCount(value: string): number {
     return Array.from(value).length;
@@ -43,13 +49,21 @@ export function formatRelativeTime(date: string, now: Date = new Date()) {
         return `${Math.floor(seconds / 86400)}d`;
     }
 
-    return new Date(date).toLocaleDateString(undefined, {
+    return new Date(date).toLocaleDateString(dateLocale, {
         month: 'short',
         day: 'numeric',
         year:
             new Date(date).getFullYear() === now.getFullYear()
                 ? undefined
                 : 'numeric',
+    });
+}
+
+export function formatFullDate(date: string): string {
+    return new Date(date).toLocaleDateString(dateLocale, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
     });
 }
 
@@ -60,12 +74,34 @@ export function formatFullDateTime(date: string, timeZone?: string): string {
         hour: 'numeric',
         minute: '2-digit',
         timeZone,
-    })} · ${value.toLocaleDateString(undefined, {
+    })} · ${value.toLocaleDateString(dateLocale, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
         timeZone,
     })}`;
+}
+
+export function formatSyncedAgo(date: string, now: Date): string {
+    const seconds = Math.round(
+        (now.getTime() - new Date(date).getTime()) / 1000,
+    );
+
+    if (seconds < 60) {
+        return 'just now';
+    }
+
+    const [value, unit]: [number, Intl.RelativeTimeFormatUnit] =
+        seconds < 3600
+            ? [Math.floor(seconds / 60), 'minute']
+            : seconds < 86400
+              ? [Math.floor(seconds / 3600), 'hour']
+              : [Math.floor(seconds / 86400), 'day'];
+
+    return new Intl.RelativeTimeFormat(dateLocale, { numeric: 'auto' }).format(
+        -value,
+        unit,
+    );
 }
 
 export function laneColor(lane: Lane): string {
@@ -79,6 +115,37 @@ export function laneTint(color: string, percent: number): string {
     return `color-mix(in oklab, ${color} ${percent}%, transparent)`;
 }
 
+type LaneStrokeOptions = {
+    axis?: 'vertical' | 'horizontal';
+    /** The length of each dash and of each gap, in pixels. */
+    dash?: number;
+    /** Ends the dashes on a whole gap, so a dashed path that continues below picks up the same rhythm. */
+    anchor?: 'start' | 'end';
+};
+
+/**
+ * Dashed lane connectors.
+ */
+export function laneStrokeStyle(
+    lane: string,
+    options: LaneStrokeOptions = {},
+): CSSProperties {
+    const isVertical = (options.axis ?? 'vertical') === 'vertical';
+    const length = options.dash ?? 2;
+    const dash =
+        options.anchor === 'end'
+            ? `repeating-linear-gradient(${isVertical ? 'to top' : 'to left'}, transparent 0 ${length}px, #000 ${length}px ${length * 2}px)`
+            : `repeating-linear-gradient(${isVertical ? 'to bottom' : 'to right'}, #000 0 ${length}px, transparent ${length}px ${length * 2}px)`;
+
+    return {
+        backgroundColor: lane,
+        WebkitMaskImage: dash,
+        maskImage: dash,
+        WebkitMaskRepeat: 'repeat',
+        maskRepeat: 'repeat',
+    };
+}
+
 export function isDeleted(commit: {
     deleted_at?: string | null;
 }): commit is DeletedCommit {
@@ -88,10 +155,13 @@ export function isDeleted(commit: {
 /**
  * Whether a commit submission came back without a commit. The `committed` and `scheduled` flashes can't tell:
  * they live in the session, so a poll or another tab landing before the redirect takes them. The rejections
- * that still redirect back (rate limited, page expired) always flash an error toast instead.
+ * that still redirect back flash an error toast (rate limited, page expired), or the timeout the user is in.
  */
-export function isRejectedSubmission(flash: { toast?: FlashToast }): boolean {
-    return flash.toast?.type === 'error';
+export function isRejectedSubmission(flash: {
+    toast?: FlashToast;
+    timeout?: TimeoutFlash;
+}): boolean {
+    return flash.toast?.type === 'error' || flash.timeout !== undefined;
 }
 
 export function laneOf(commit: ThreadCommit): string {
@@ -140,7 +210,7 @@ export function formatDayLabel(date: string, now: Date = new Date()): string {
         return 'Yesterday';
     }
 
-    return day.toLocaleDateString(undefined, {
+    return day.toLocaleDateString(dateLocale, {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
@@ -160,10 +230,28 @@ export function formatZonedTime(date: string, timeZone: string): string {
     });
 }
 
+/**
+ * The offset a timezone has at a moment, like `UTC +02:00`, or `UTC` when it has none.
+ */
+export function formatUtcOffset(date: Date, timeZone: string): string {
+    const offset = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'longOffset',
+    })
+        .formatToParts(date)
+        .find((part) => part.type === 'timeZoneName')?.value;
+
+    if (offset === undefined || offset === 'GMT' || offset === 'GMT+00:00') {
+        return 'UTC';
+    }
+
+    return offset.replace('GMT', 'UTC ');
+}
+
 export function formatZonedDate(date: string, timeZone: string): string {
     const value = new Date(date);
 
-    return value.toLocaleDateString(undefined, {
+    return value.toLocaleDateString(dateLocale, {
         month: 'short',
         day: 'numeric',
         year:

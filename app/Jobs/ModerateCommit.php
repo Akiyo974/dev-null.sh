@@ -7,14 +7,18 @@ namespace App\Jobs;
 use App\Actions\UpdateCommitAiDecision;
 use App\Actions\UpdateCommitStatuses;
 use App\Enums\CommitStatus;
+use App\Exceptions\CommitProcessingFailed;
 use App\Models\Commit;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\Attributes\Backoff;
 use Illuminate\Queue\Attributes\DeleteWhenMissingModels;
+use Illuminate\Queue\Attributes\Timeout;
 use Illuminate\Queue\Attributes\Tries;
+use Throwable;
 
 #[Backoff([60, 600])]
+#[Timeout(180)]
 #[Tries(3)]
 #[DeleteWhenMissingModels]
 final class ModerateCommit implements ShouldQueue
@@ -37,13 +41,15 @@ final class ModerateCommit implements ShouldQueue
         }
 
         if ($this->commit->user?->hasGoodReputation()) {
-            if (! $this->commit->user->hasRecentReports()) {
-                $updateCommitStatuses->handle([$this->commit->id], CommitStatus::Approved, onlyPending: true);
-            }
+            $updateCommitStatuses->handle([$this->commit->id], CommitStatus::Approved, onlyPending: true);
 
             return;
         }
 
-        $action->handle($this->commit);
+        try {
+            $action->handle($this->commit);
+        } catch (Throwable $throwable) {
+            throw new CommitProcessingFailed('Moderation', $this->commit->id, $throwable);
+        }
     }
 }

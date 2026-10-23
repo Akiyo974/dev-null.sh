@@ -31,7 +31,6 @@ final readonly class CommitPhotoController
             return $focusedCommit ??= Commit::query()
                 ->withVisibleReplyCount($currentUser)
                 ->withContinuationId($currentUser)
-                ->withSavedState($currentUser)
                 ->with(['user', 'linkPreview', 'images'])
                 ->withQuotedCommitFor($currentUser)
                 ->withStarsFor($currentUser)
@@ -47,7 +46,7 @@ final readonly class CommitPhotoController
             'commit' => $getCommit,
             'ancestors' => fn (): Collection => $ancestors->get($commit, $currentUser),
             'continuation' => $getContinuation,
-            'replies' => fn (): ?CursorPaginator => $getContinuation()->commits->isEmpty() ? $replies->paginate($commit, $currentUser) : null,
+            'replies' => fn (): ?CursorPaginator => $getContinuation()->commits->isEmpty() ? $replies->paginate($commit, $currentUser, limit: $request->repliesPerPage()) : null,
             'photo' => fn (): array => [
                 'commit' => $getCommit(),
                 'index' => $photo - 1,

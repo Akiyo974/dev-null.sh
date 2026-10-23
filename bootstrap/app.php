@@ -10,6 +10,8 @@ use App\Http\Middleware\AuthenticateSshSignature;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\PreventFraming;
+use App\Http\Middleware\RedirectBannedUsers;
+use App\Http\Middleware\UpdateLastSeenAt;
 use App\Models\User;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -36,7 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(PreventFraming::class);
 
-        $middleware->encryptCookies(except: ['appearance', 'sidebar_state', 'who_to_follow', 'who_to_follow_round']);
+        $middleware->encryptCookies(except: ['appearance', 'sidebar_state', 'who_to_follow', 'who_to_follow_round', 'lane_dimming', 'replies_per_page']);
 
         $middleware->redirectGuestsTo(fn (): string => route('home'));
         $middleware->redirectUsersTo(fn (Request $request): string => route('log.show', $request->user()->log ?? Log::Following));
@@ -49,6 +51,12 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleAppearance::class,
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,
+            UpdateLastSeenAt::class,
+            RedirectBannedUsers::class,
+        ]);
+
+        $middleware->api(append: [
+            UpdateLastSeenAt::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

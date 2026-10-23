@@ -17,6 +17,7 @@ use App\Queries\CommitAncestorsQuery;
 use App\Queries\CommitContinuationQuery;
 use App\Queries\CommitPageQuery;
 use App\Queries\CommitRepliesQuery;
+use App\Queries\UserAchievementsQuery;
 use App\Services\PageMetadata;
 use Illuminate\Container\Attributes\CurrentUser;
 use Illuminate\Contracts\Pagination\CursorPaginator;
@@ -44,8 +45,8 @@ final readonly class CommitController
         };
 
         $threadReplies = null;
-        $getReplies = function () use (&$threadReplies, $replies, $commit, $currentUser): CursorPaginator {
-            return $threadReplies ??= $replies->paginate($commit, $currentUser);
+        $getReplies = function () use (&$threadReplies, $replies, $commit, $currentUser, $request): CursorPaginator {
+            return $threadReplies ??= $replies->paginate($commit, $currentUser, limit: $request->repliesPerPage());
         };
 
         $preview = $currentUser instanceof User || $request->inertia() ? null : $metadata->commit(
@@ -61,14 +62,22 @@ final readonly class CommitController
         ])->withViewData(['preview' => $preview]);
     }
 
-    public function store(CreateCommitRequest $request, #[CurrentUser] User $user, CreateCommit $action): RedirectResponse
+    public function store(CreateCommitRequest $request, #[CurrentUser] User $user, CreateCommit $action, UserAchievementsQuery $achievements): RedirectResponse
     {
+        $before = $achievements->unlockedBadgeNames($user);
+
         $commit = $action->handle($user, $request->string('body')->value(), quotedCommit: $request->quotedCommit(), images: $request->images(), imageDescriptions: $request->imageDescriptions(), linkPreview: $request->linkPreview(), poll: $request->poll());
+
+        $unlocked = $achievements->unlockedBadgeNames($user)->diff($before)->values();
 
         Inertia::flash('committed', [
             'id' => $commit->id,
             'body' => $commit->body,
         ]);
+
+        if ($unlocked->isNotEmpty()) {
+            Inertia::flash('achievementsUnlocked', $unlocked->all());
+        }
 
         if ($commit->status === CommitStatus::Pending) {
             Inertia::flash('toast', [

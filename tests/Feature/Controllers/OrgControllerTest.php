@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Enums\OrgEvent;
+use App\Http\Middleware\HandleInertiaRequests;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
@@ -73,10 +74,10 @@ it('lets site admins add anyone with remotes on', function (): void {
     $this->actingAs($nuno)->getJson(route('inbox.index'))->assertJsonCount(1, 'conversations');
 });
 
-it('caps an org at fifteen people', function (): void {
+it('caps an org at a hundred people', function (): void {
     $mark = User::factory()->create();
 
-    $this->actingAs($mark)->postJson(route('org.store'), ['members' => array_map(fn (User $user): string => $user->username, followersOf($mark, 15))])
+    $this->actingAs($mark)->postJson(route('org.store'), ['members' => array_map(fn (User $user): string => $user->username, followersOf($mark, Conversation::MAX_MEMBERS))])
         ->assertUnprocessable()->assertJsonValidationErrors('members');
 });
 
@@ -98,6 +99,24 @@ it('shows an org only to its members', function (): void {
 
     $this->actingAs(User::factory()->create())->get(route('org.show', $org))->assertNotFound();
     $this->getJson(route('org-message.index', $org))->assertNotFound();
+});
+
+it('polls the badge counts on an open org without marking it read', function (): void {
+    $mark = User::factory()->create();
+    [$nuno] = followersOf($mark, 1);
+    $org = createOrg($mark, [$nuno]);
+    pushToOrg($nuno, $org, 'standup in 10?');
+
+    $this->actingAs($mark)->withHeaders([
+        'X-Inertia' => 'true',
+        'X-Inertia-Version' => (string) new HandleInertiaRequests()->version(request()),
+        'X-Inertia-Partial-Component' => 'conversation/index',
+        'X-Inertia-Partial-Data' => 'auth.unreadNotificationsCount,auth.unreadMessagesCount',
+    ])->get(route('org.show', $org))->assertOk()
+        ->assertJsonPath('props.auth.unreadMessagesCount', 1)
+        ->assertJsonMissingPath('props.thread');
+
+    $this->actingAs(User::factory()->create())->get(route('org.show', $org))->assertNotFound();
 });
 
 it('lets maintainers rename the org', function (): void {
