@@ -140,17 +140,24 @@ function characterRect(textarea: HTMLTextAreaElement, index: number) {
     mirror.style.whiteSpace = 'pre-wrap';
     mirror.style.overflowWrap = 'break-word';
 
+    // The marker is a zero-width word joiner right at the index, so its box is where the character starts whichever way
+    // the line runs, and it adds no line break. The text after it follows on its own, so the mirror still wraps like
+    // the textarea.
     mirror.textContent = textarea.value.slice(0, index);
-    marker.textContent = textarea.value.slice(index) || '.';
+    marker.textContent = '⁠';
     mirror.appendChild(marker);
+    mirror.append(textarea.value.slice(index) || '.');
     document.body.appendChild(mirror);
 
     const rect = textarea.getBoundingClientRect();
+    const mirrorRect = mirror.getBoundingClientRect();
+    const markerRect = marker.getBoundingClientRect();
     const lineHeight =
         Number.parseFloat(style.lineHeight) ||
         Number.parseFloat(style.fontSize) * 1.4;
-    const top = rect.top + marker.offsetTop - textarea.scrollTop;
-    const left = rect.left + marker.offsetLeft - textarea.scrollLeft;
+    const top = rect.top + markerRect.top - mirrorRect.top - textarea.scrollTop;
+    const left =
+        rect.left + markerRect.left - mirrorRect.left - textarea.scrollLeft;
 
     mirror.remove();
 
