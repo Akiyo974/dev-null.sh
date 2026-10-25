@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use App\Actions\CreateTomFriendship;
 use App\Actions\UpdateCommitStatuses;
+use App\Dto\ThreadEngagement;
 use App\Enums\CommitStatus;
+use App\Jobs\CheckUserLevel;
 use App\Jobs\ReplyAsTom;
 use App\Models\Commit;
 use App\Models\User;
@@ -28,13 +30,13 @@ it('may approve many commits', function (): void {
 });
 
 it('queues direct replies to Tom in bulk without per-reply queries', function (): void {
-    config(['ai.providers.opencode.key' => 'test']);
+    config(['ai.providers.opencode.key' => 'test', 'ai.providers.openai.key' => 'test']);
     $tom = User::factory()->create(['username' => 'tom', 'github_id' => CreateTomFriendship::GITHUB_ID]);
 
     $queryCounts = collect([2, 6])->map(function (int $count) use ($tom): int {
         $parents = Commit::factory()->for($tom)->count($count)->create(['body' => 'A developer community.']);
         $replies = $parents->map(fn (Commit $parent): Commit => Commit::factory()->pending()->for($parent, 'parent')->create(['body' => 'Thanks for explaining!']));
-        Queue::fake([ReplyAsTom::class]);
+        Queue::fake([ReplyAsTom::class, CheckUserLevel::class]);
         DB::flushQueryLog();
         DB::enableQueryLog();
 
@@ -102,7 +104,7 @@ it('lifts the thread when a reply is approved', function (): void {
     resolve(UpdateCommitStatuses::class)->handle([$reply->id], CommitStatus::Approved);
 
     expect($commit->fresh()->hot_score)
-        ->toEqualWithDelta(resolve(TheAlgorithm::class)->score($commit->created_at, 0, 1), 1e-9);
+        ->toEqualWithDelta(resolve(TheAlgorithm::class)->score($commit->created_at, new ThreadEngagement(stargazers: 0, quoters: 0, repliers: 1, repliersAnsweredByAuthor: 0)), 1e-9);
 });
 
 it('lifts the quoted thread when a quote is approved', function (): void {
@@ -112,5 +114,5 @@ it('lifts the quoted thread when a quote is approved', function (): void {
     resolve(UpdateCommitStatuses::class)->handle([$quote->id], CommitStatus::Approved);
 
     expect($commit->fresh()->hot_score)
-        ->toEqualWithDelta(resolve(TheAlgorithm::class)->score($commit->created_at, 0, 1), 1e-9);
+        ->toEqualWithDelta(resolve(TheAlgorithm::class)->score($commit->created_at, new ThreadEngagement(stargazers: 0, quoters: 1, repliers: 0, repliersAnsweredByAuthor: 0)), 1e-9);
 });
