@@ -184,6 +184,10 @@ final readonly class UserAchievementsQuery
                 'progress' => $isShellShocked ? 1 : 0,
                 'target' => Achievement::ShellShocked->target(),
             ],
+            Achievement::SuperSaiyan->value => [
+                'progress' => min($user->followers()->count(), Achievement::SuperSaiyan->target()),
+                'target' => Achievement::SuperSaiyan->target(),
+            ],
             Achievement::Upstream->value => [
                 'progress' => $this->upstream->includes($user) ? 1 : 0,
                 'target' => Achievement::Upstream->target(),

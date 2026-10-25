@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { DragonBallIcon } from '@/components/dragon-ball-icon';
 import {
     Popover,
     PopoverContent,
@@ -29,6 +30,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { WordmarkText } from '@/components/wordmark-text';
 import { dropConfetti } from '@/lib/confetti';
 import { formatCount, formatExactCount } from '@/lib/numbers';
 import { cn } from '@/lib/utils';
@@ -49,6 +51,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
     cookie: Cookie,
     'bot-off': BotOff,
     bomb: Bomb,
+    'dragon-ball': DragonBallIcon,
     'git-pull-request': GitPullRequest,
 };
 
@@ -370,7 +373,9 @@ export function AchievementsShelf({
                                                 : `(${badge.progress}/${badge.target})`}
                                         </p>
                                         <p className="mt-0.5 font-sans text-muted-foreground">
-                                            {badge.description}
+                                            <WordmarkText>
+                                                {badge.description}
+                                            </WordmarkText>
                                         </p>
                                     </TooltipContent>
                                 </Tooltip>
