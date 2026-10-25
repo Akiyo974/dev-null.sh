@@ -1,5 +1,6 @@
 import { usePage } from '@inertiajs/react';
 import { useEffect, useRef, useState } from 'react';
+import { CertificateText } from '@/components/certificate-text';
 import { CodeBlock } from '@/components/code-block';
 import { LinkifiedText } from '@/components/linkified-text';
 import { bodyBlocks } from '@/lib/code';
@@ -85,7 +86,7 @@ export function BodySegments({
                                 dir="ltr"
                                 className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.875em]"
                             >
-                                {segment.code}
+                                <CertificateText text={segment.code} />
                             </code>
                         );
                     case 'block':
