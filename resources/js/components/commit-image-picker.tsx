@@ -186,6 +186,8 @@ export function ImagePickerPreviews({
     const undescribed = images.filter(
         (_, index) => !descriptions[index]?.trim(),
     ).length;
+    // The +ALT buttons only point at the hint while it is on screen, so a screen reader never looks for a missing one.
+    const isHintShown = editing === null && undescribed > 0;
 
     const previewButtonId = (index: number) => `${id}-preview-${index}`;
 
@@ -289,7 +291,9 @@ export function ImagePickerPreviews({
                                 aria-expanded={editing === index}
                                 aria-controls={`${id}-description`}
                                 aria-describedby={
-                                    isDescribed ? undefined : `${id}-hint`
+                                    isDescribed || !isHintShown
+                                        ? undefined
+                                        : `${id}-hint`
                                 }
                                 className={cn(
                                     'absolute bottom-1 left-1 rounded px-1 text-[11px] leading-4 font-bold tracking-wide backdrop-blur transition',
@@ -306,7 +310,7 @@ export function ImagePickerPreviews({
                 })}
             </ul>
 
-            {editing === null && undescribed > 0 && (
+            {isHintShown && (
                 <p
                     id={`${id}-hint`}
                     className="mt-1.5 text-xs text-muted-foreground"
