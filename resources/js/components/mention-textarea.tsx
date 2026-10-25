@@ -128,7 +128,6 @@ function triggerAt(
 function characterRect(textarea: HTMLTextAreaElement, index: number) {
     const style = window.getComputedStyle(textarea);
     const mirror = document.createElement('div');
-    const marker = document.createElement('span');
 
     mirroredProperties.forEach((property) =>
         mirror.style.setProperty(property, style.getPropertyValue(property)),
@@ -140,24 +139,29 @@ function characterRect(textarea: HTMLTextAreaElement, index: number) {
     mirror.style.whiteSpace = 'pre-wrap';
     mirror.style.overflowWrap = 'break-word';
 
-    // The marker is a zero-width word joiner right at the index, so its box is where the character starts whichever way
-    // the line runs, and it adds no line break. The text after it follows on its own, so the mirror still wraps like
-    // the textarea.
-    mirror.textContent = textarea.value.slice(0, index);
-    marker.textContent = String.fromCodePoint(0x2060);
-    mirror.appendChild(marker);
-    mirror.append(textarea.value.slice(index) || '.');
+    // The mirror holds the draft exactly as typed, so it wraps where the textarea does, and a range over the character
+    // at the index measures where it sits. Its box begins on the right when the draft runs right to left.
+    const text = document.createTextNode(
+        index < textarea.value.length ? textarea.value : `${textarea.value}.`,
+    );
+    mirror.appendChild(text);
     document.body.appendChild(mirror);
+
+    const range = document.createRange();
+    range.setStart(text, index);
+    range.setEnd(text, index + 1);
 
     const rect = textarea.getBoundingClientRect();
     const mirrorRect = mirror.getBoundingClientRect();
-    const markerRect = marker.getBoundingClientRect();
+    const characterBox = range.getBoundingClientRect();
+    const start =
+        style.direction === 'rtl' ? characterBox.right : characterBox.left;
     const lineHeight =
         Number.parseFloat(style.lineHeight) ||
         Number.parseFloat(style.fontSize) * 1.4;
-    const top = rect.top + markerRect.top - mirrorRect.top - textarea.scrollTop;
-    const left =
-        rect.left + markerRect.left - mirrorRect.left - textarea.scrollLeft;
+    const top =
+        rect.top + characterBox.top - mirrorRect.top - textarea.scrollTop;
+    const left = rect.left + start - mirrorRect.left - textarea.scrollLeft;
 
     mirror.remove();
 
