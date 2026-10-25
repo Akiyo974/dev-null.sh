@@ -19,6 +19,12 @@ final readonly class UpstreamContributorsQuery
 
     private const int MaxPages = 10;
 
+    /**
+     * Longer than a refresh can take: up to ten pages, each request given five seconds, with room to spare. A lock that
+     * ran out mid-refresh would let a second one start alongside it.
+     */
+    private const int RefreshLockSeconds = 120;
+
     public function __construct(private GitHub $github)
     {
         //
@@ -46,7 +52,7 @@ final readonly class UpstreamContributorsQuery
         }
 
         /** @var list<string>|false $refreshed */
-        $refreshed = Cache::lock(self::Key.':refresh', 30)->get($this->refresh(...));
+        $refreshed = Cache::lock(self::Key.':refresh', self::RefreshLockSeconds)->get($this->refresh(...));
 
         if ($refreshed !== false) {
             return $refreshed;
