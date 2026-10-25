@@ -258,6 +258,22 @@ it('sends images, with or without a body', function (string $body): void {
         ->and($response->json('message.images.0.url'))->toBe(route('message-image.show', Message::query()->sole()->images->first()));
 })->with(['look at this', '']);
 
+it('counts a line break once in a message sent with images', function (): void {
+    Storage::fake();
+
+    $mark = User::factory()->withRemotes()->create();
+    $nuno = User::factory()->withRemotes()->create();
+    $text = str_repeat('x', Message::MAX_LENGTH - 6);
+
+    // What a browser sends for a message of the full length over four lines, once the form carries a file.
+    $this->actingAs($mark)->post(route('conversation-message.store', $nuno), [
+        'body' => "{$text}\r\na\r\nb\r\nc",
+        'client_id' => Str::uuid()->toString(),
+        'images' => [UploadedFile::fake()->image('deploy.png', 40, 30)],
+    ], ['Accept' => 'application/json'])->assertCreated()
+        ->assertJsonPath('message.body', "{$text}\na\nb\nc");
+});
+
 it('stores the images of a retried message only once', function (): void {
     Storage::fake();
 

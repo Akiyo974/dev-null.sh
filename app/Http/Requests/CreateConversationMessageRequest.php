@@ -53,6 +53,23 @@ final class CreateConversationMessageRequest extends FormRequest
     }
 
     /**
+     * Browsers send each line break as \r\n in a form that carries files, and as \n in JSON, so a message with images
+     * would count its line breaks twice against the limit and keep the \r. Every request that takes a message turns
+     * them back into \n before the body is measured.
+     */
+    public static function normalizeBody(FormRequest $request): void
+    {
+        if (is_string($request->input('body'))) {
+            $request->merge(['body' => str_replace(["\r\n", "\r"], "\n", $request->string('body')->value())]);
+        }
+    }
+
+    public function prepareForValidation(): void
+    {
+        self::normalizeBody($this);
+    }
+
+    /**
      * A request can't be answered before it is merged, and a sender gets one message in until it is.
      */
     public function authorize(PushAccessQuery $access): Response

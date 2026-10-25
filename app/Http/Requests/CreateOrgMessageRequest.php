@@ -20,6 +20,11 @@ use Illuminate\Validation\Rules\In;
 
 final class CreateOrgMessageRequest extends FormRequest
 {
+    public function prepareForValidation(): void
+    {
+        CreateConversationMessageRequest::normalizeBody($this);
+    }
+
     public function authorize(): Response
     {
         $user = $this->user();

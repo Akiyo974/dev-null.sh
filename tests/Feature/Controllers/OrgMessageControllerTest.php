@@ -133,6 +133,21 @@ it('pushes images and the link card the member chose', function (?string $choice
     'no card' => ['', null],
 ]);
 
+it('keeps line breaks as typed in a message pushed with images', function (): void {
+    Storage::fake();
+
+    $mark = User::factory()->create();
+    [$nuno] = followersOf($mark, 1);
+    $org = createOrg($mark, [$nuno]);
+
+    $this->actingAs($nuno)->post(route('org-message.store', $org), [
+        'body' => "release notes\r\nare out\rtoday",
+        'client_id' => Str::uuid()->toString(),
+        'images' => [UploadedFile::fake()->image('notes.png', 20, 20)],
+    ], ['Accept' => 'application/json'])->assertCreated()
+        ->assertJsonPath('message.body', "release notes\nare out\ntoday");
+});
+
 it('pushes voice notes to the org', function (): void {
     Storage::fake();
 

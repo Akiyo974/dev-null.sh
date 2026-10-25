@@ -21,6 +21,11 @@ use Illuminate\Validation\Rules\In;
 
 final class CreateApiConversationMessageRequest extends FormRequest
 {
+    public function prepareForValidation(): void
+    {
+        CreateConversationMessageRequest::normalizeBody($this);
+    }
+
     /**
      * A request can't be answered before it is merged, and a sender gets one message in until it is.
      */
