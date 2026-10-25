@@ -92,3 +92,19 @@ it('shows no commits for a link nobody used as their card', function (): void {
         ->where('stats', ['commits' => 0, 'people' => 0])
         ->where('commits', null));
 });
+
+it('leaves the commits of muted people out of a link, like the logs do', function (): void {
+    $viewer = User::factory()->create();
+    $muted = User::factory()->create();
+    $viewer->muting()->attach($muted);
+    $link = LinkPreview::factory()->fetched()->create(['url' => 'https://wiki.php.net/rfc/pipe-operator']);
+    $kept = Commit::factory()->create(['link_preview_id' => $link->id]);
+    Commit::factory()->for($muted)->create(['link_preview_id' => $link->id]);
+
+    $this->actingAs($viewer)
+        ->get(route('link.index', ['url' => 'https://wiki.php.net/rfc/pipe-operator']))
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page
+            ->has('commits.data', 1)
+            ->where('commits.data.0.id', $kept->id));
+});

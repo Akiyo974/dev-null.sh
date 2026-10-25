@@ -10,7 +10,8 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * The commits whose link card is the given link, oldest first, so they read like the comments under it.
+ * The commits whose link card is the given link, oldest first, so they read like the comments under it. Like the logs,
+ * it leaves out the people the user muted.
  */
 final readonly class LinkCommitsQuery
 {
@@ -19,6 +20,7 @@ final readonly class LinkCommitsQuery
         return Commit::query()
             ->where('link_preview_id', $link->id)
             ->visibleTo($user)
+            ->withoutMutedAuthorsFor($user)
             ->withVisibleReplyCount($user)
             ->withReplyPreviews($user)
             ->withCardDataFor($user)
