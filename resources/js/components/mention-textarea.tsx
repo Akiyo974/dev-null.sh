@@ -144,7 +144,7 @@ function characterRect(textarea: HTMLTextAreaElement, index: number) {
     // the line runs, and it adds no line break. The text after it follows on its own, so the mirror still wraps like
     // the textarea.
     mirror.textContent = textarea.value.slice(0, index);
-    marker.textContent = '⁠';
+    marker.textContent = String.fromCodePoint(0x2060);
     mirror.appendChild(marker);
     mirror.append(textarea.value.slice(index) || '.');
     document.body.appendChild(mirror);
