@@ -120,8 +120,8 @@ it('creates a public guild and gives only its creator moderation controls', func
     Event::assertDispatched(UsersUpdated::class, fn (UsersUpdated $event): bool => $event->update === UserUpdate::Guilds && in_array($admin->id, $event->userIds, true));
 
     $this->get(route('guild.show', 'jobs'))->assertOk()->assertInertia(fn ($page) => $page
-        ->component('guild/show')->where('canModerate', true)->where('guilds.0.name', 'Jo bs')
-        ->where('guilds.0.icon_url', null)->missing('guilds.0.user_id')->missing('guilds.0.icon_path'));
+        ->component('guild/show')->where('canModerate', true)->where('guild.name', 'Jo bs')
+        ->where('guild.icon_url', null)->missing('guild.user_id')->missing('guild.icon_path')->missing('guilds'));
     $this->actingAs(User::factory()->create(['handle' => 'other-admin']))
         ->get(route('guild.show', 'jobs'))->assertOk()->assertInertia(fn ($page) => $page->where('canModerate', false));
 });
@@ -130,7 +130,7 @@ it('hides guild data and every guild endpoint from ordinary members', function (
     $user = User::factory()->create();
     $guild = Guild::factory()->create(['user_id' => $user->id]);
 
-    $this->actingAs($user)->get('/search?q=%23jobs')->assertOk()->assertInertia(fn ($page) => $page->where('guilds', null));
+    $this->actingAs($user)->get('/search?q=%23jobs')->assertOk()->assertInertia(fn ($page) => $page->where('guildsEnabled', false)->missing('guilds'));
     $this->get(route('guild.show', $guild->handle))->assertNotFound();
     $this->get(route('guild-icon.show', $guild->handle))->assertNotFound();
     $this->post(route('guild.store'), [])->assertNotFound();
@@ -166,7 +166,7 @@ it('rejects names that cannot produce a hashtag without an explicit handle', fun
 
 it('requires sign in and exposes no guild data to guests', function (): void {
     $guild = Guild::factory()->create();
-    $this->get('/')->assertInertia(fn ($page) => $page->where('guilds', null));
+    $this->get('/')->assertInertia(fn ($page) => $page->where('guildsEnabled', false)->missing('guilds'));
     $this->get(route('guild.show', $guild->handle))->assertRedirectToRoute('home');
     $this->getJson(route('guild-icon.show', $guild->handle))->assertUnauthorized();
     $this->postJson(route('guild.store'), [])->assertUnauthorized();
@@ -178,7 +178,7 @@ it('switches off the entire preview even for its admin creator', function (): vo
     $guild = Guild::factory()->create(['user_id' => $admin->id]);
     $this->actingAs($admin)->put(route('feature.update', Feature::Guilds), ['enabled' => false])->assertRedirect();
 
-    $this->actingAs($admin)->get('/search?q=%23jobs')->assertInertia(fn ($page) => $page->where('guilds', null));
+    $this->actingAs($admin)->get('/search?q=%23jobs')->assertInertia(fn ($page) => $page->where('guildsEnabled', false)->missing('guilds'));
     $this->get(route('guild.show', $guild->handle))->assertNotFound();
     $this->get(route('guild-icon.show', $guild->handle))->assertNotFound();
     $this->post(route('guild.store'), [])->assertNotFound();
@@ -248,7 +248,7 @@ it('reencodes uploaded icons serves them only to admins and replaces or removes 
     $original = $guild->icon_path;
     expect($original)->toEndWith('.webp')->not->toContain('original');
     $this->get(route('guild-icon.show', 'jobs'))->assertOk()->assertHeader('Content-Type', 'image/webp');
-    $this->get(route('guild.show', 'jobs'))->assertInertia(fn ($page) => $page->where('guilds.0.icon_url', route('guild-icon.show', ['guild' => 'jobs', 'v' => $guild->updated_at->getTimestampMs()])));
+    $this->get(route('guild.show', 'jobs'))->assertInertia(fn ($page) => $page->where('guild.icon_url', route('guild-icon.show', ['guild' => 'jobs', 'v' => $guild->updated_at->getTimestampMs()])));
 
     $this->put(route('guild.update', 'jobs'), ['name' => 'Jobs', 'description' => 'Hiring again.', 'emoji' => '💼', 'remove_icon' => false, 'images' => [UploadedFile::fake()->image('next.jpg')]])->assertRedirect();
     expect($guild->fresh()->icon_path)->not->toBe($original);
@@ -308,7 +308,7 @@ it('includes hex-shaped hashtags on their guild board and excludes explicit swat
         ->has('commits', 1)->where('commits.0.id', $tagged->id));
 });
 
-it('merges board posts and exact hashtags newest first with thirty roots per page', function (): void {
+it('merges board posts and exact hashtags newest first with thirty matching commits per page', function (): void {
     $admin = User::factory()->create(['handle' => 'admin']);
     $guild = Guild::factory()->create(['handle' => 'café_dev']);
     $old = Commit::factory()->create(['body' => 'An old regular commit', 'created_at' => now()->subYear()]);
@@ -316,18 +316,18 @@ it('merges board posts and exact hashtags newest first with thirty roots per pag
     $board = Commit::factory()->for($guild)->count(15)->create(['body' => 'Direct to the board']);
     Commit::factory()->count(122)->create(['body' => '`#café_dev` #café_developers']);
     Commit::factory()->for(Guild::factory())->create(['body' => 'Another board #café_dev']);
-    $reply = Commit::factory()->for($old, 'parent')->create(['body' => '#café_dev']);
-    Commit::factory()->for($reply, 'parent')->create(['body' => 'A nested #café_dev reply']);
+    $reply = Commit::factory()->for($old, 'parent')->create(['body' => '#café_dev', 'created_at' => now()->subMinute()]);
+    $nested = Commit::factory()->for($reply, 'parent')->create(['body' => 'A nested #café_dev reply']);
     $boardReply = Commit::factory()->for($board->last(), 'parent')->create(['body' => 'An ordinary reply']);
-    Commit::factory()->count(101)->for($board->last(), 'parent')->create(['body' => 'An older #café_dev match', 'created_at' => now()->subHour()]);
-    Commit::factory()->for($board->last(), 'parent')->create(['body' => 'Another #café_dev match']);
     $this->actingAs($admin)->get(route('guild.show', 'café_dev'))->assertOk()->assertInertia(fn ($page) => $page
         ->has('commits', 30)->where('hasMore', true)->where('page', 1)
-        ->where('commits.0.id', $board->last()->id)->where('commits.15.id', $tagged->last()->id)
-        ->has('commits.0.reply_preview.data', 3)->where('commits.0.reply_preview.data.1.id', $boardReply->id));
+        ->where('commits.0.id', $nested->id)->where('commits.0.parent.id', $reply->id)
+        ->where('commits.1.id', $board->last()->id)->where('commits.16.id', $reply->id)
+        ->where('commits.17.id', $tagged->last()->id)
+        ->has('commits.1.reply_preview.data', 1)->where('commits.1.reply_preview.data.0.id', $boardReply->id));
     $this->get(route('guild.show', ['guild' => 'café_dev', 'page' => 2]))->assertOk()->assertInertia(fn ($page) => $page
-        ->has('commits', 1)->where('commits.0.id', $old->id)->where('hasMore', false)->where('page', 2)
-        ->where('commits.0.reply_preview.data.0.id', $reply->id));
+        ->has('commits', 2)->where('commits.0.id', $tagged[1]->id)->where('commits.1.id', $tagged[0]->id)
+        ->where('hasMore', false)->where('page', 2));
     $this->getJson(route('guild.show', ['guild' => 'café_dev', 'page' => 0]))->assertUnprocessable()->assertJsonValidationErrors('page');
 });
 
@@ -364,7 +364,7 @@ it('reads the roots of a guild page one more time for its pinned commit', functi
     DB::disableQueryLog();
 });
 
-it('includes roots matched only by nested replies without exposing hidden roots or replies', function (): void {
+it('shows nested guild mentions directly without exposing hidden roots or replies', function (): void {
     $admin = User::factory()->create(['handle' => 'admin']);
     Guild::factory()->create(['handle' => 'rust']);
     $root = Commit::factory()->create(['body' => 'A regular thread']);
@@ -381,10 +381,44 @@ it('includes roots matched only by nested replies without exposing hidden roots 
     Commit::factory()->for($muted)->for($unmatched, 'parent')->create(['body' => '#rust']);
 
     $this->actingAs($admin)->get(route('guild.show', 'rust'))->assertOk()->assertInertia(fn ($page) => $page
-        ->has('commits', 1)->where('commits.0.id', $root->id)->where('hasMore', false)
-        ->where('commits.0.reply_preview.data.0.id', $parent->id));
+        ->has('commits', 1)->where('commits.0.id', $match->id)->where('hasMore', false)
+        ->where('commits.0.parent.id', $parent->id)->where('commits.0.body', 'A nested #rust reply'));
     $this->getJson(route('commit-reply.index', $parent))->assertOk()->assertJsonPath('data.0.id', $match->id);
 });
+
+it('keeps a matching guild reply visible with only a tombstone for its deleted parent', function (): void {
+    $viewer = User::factory()->create(['handle' => 'admin']);
+    Guild::factory()->create(['handle' => 'rust']);
+    $root = Commit::factory()->create();
+    $parent = Commit::factory()->for($root, 'parent')->create(['body' => 'Deleted parent context']);
+    $match = Commit::factory()->for($parent, 'parent')->create(['body' => 'A public #rust reply']);
+    $parent->delete();
+
+    $this->actingAs($viewer)->get(route('guild.show', 'rust'))->assertOk()->assertInertia(fn ($page) => $page
+        ->has('commits', 1)->where('commits.0.id', $match->id)->where('commits.0.body', 'A public #rust reply')
+        ->where('commits.0.parent', [
+            'id' => $parent->id,
+            'parent_id' => $root->id,
+            'deleted_at' => now()->startOfSecond()->toJSON(),
+        ]));
+});
+
+it('keeps an unavailable parent out of a matching guild reply', function (string $hidden): void {
+    $viewer = User::factory()->create(['handle' => 'admin']);
+    Guild::factory()->create(['handle' => 'rust']);
+    $root = Commit::factory()->create();
+    $parent = Commit::factory()->for($root, 'parent')->create(['body' => 'Private parent context']);
+    $match = Commit::factory()->for($parent, 'parent')->create(['body' => 'A public #rust reply']);
+
+    if ($hidden === 'pending') {
+        $parent->update(['status' => CommitStatus::Pending]);
+    } else {
+        $viewer->muting()->attach($parent->user_id);
+    }
+
+    $this->actingAs($viewer)->get(route('guild.show', 'rust'))->assertOk()->assertInertia(fn ($page) => $page
+        ->has('commits', 1)->where('commits.0.id', $match->id)->where('commits.0.parent', null));
+})->with(['pending', 'muted']);
 
 it('matches decorated names to their hashtag while preserving their display spelling', function (string $handle, string $name): void {
     $this->actingAs(User::factory()->create(['handle' => 'admin']))->post(route('guild.store'), [
@@ -410,7 +444,7 @@ it('keeps guild reports private encrypted and deduplicated until admins dismiss 
     $report = GuildReport::query()->sole();
     expect($report->details)->toBe('Description promotes an unrelated scam.')
         ->and(DB::table('guild_reports')->value('details'))->not->toBe($report->details);
-    $this->get(route('guild.show', $guild->handle))->assertInertia(fn ($page) => $page->missing('reports')->missing('guilds.0.details'));
+    $this->get(route('guild.show', $guild->handle))->assertInertia(fn ($page) => $page->missing('reports')->missing('guild.details'));
     $this->get(route('guild-report.index'))->assertOk()->assertInertia(fn ($page) => $page
         ->has('reports.data', 1)->where('reports.data.0.details', $report->details)->missing('reports.data.0.reporter_id'));
     $this->delete(route('guild-report.destroy', $report))->assertRedirect();
@@ -442,7 +476,7 @@ it('pauses the guild without disconnecting its content and forbids removed moder
     $this->assertDatabaseCount('guild_reports', 1);
     $this->assertDatabaseCount('guild_preferences', 2);
     Storage::assertExists('guild-icons/removed.webp');
-    $this->get(route('guild.show', 'jobs'))->assertOk()->assertInertia(fn ($page) => $page->where('guilds.0.is_paused', true)->has('commits', 2));
+    $this->get(route('guild.show', 'jobs'))->assertOk()->assertInertia(fn ($page) => $page->where('guild.is_paused', true)->has('commits', 2));
     $this->delete(route('guild-moderator.destroy', $guild))->assertRedirect();
     $payload = ['handle' => 'JOBS', 'name' => 'Jobs', 'description' => 'Real jobs.', 'emoji' => '💼'];
     $this->actingAs($owner)->postJson(route('guild.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('handle');
@@ -541,7 +575,7 @@ it('hides muted guild replies in logs while keeping direct threads readable', fu
         ->assertJsonPath('props.refreshedCommits.0.id', $parent->id)
         ->assertJsonCount(0, 'props.refreshedCommits.0.reply_preview.data');
     $this->get(route('guild.show', 'rust'))->assertInertia(fn ($page) => $page
-        ->has('commits', 1)->where('commits.0.id', $parent->id)->where('commits.0.reply_preview.data.0.id', $reply->id));
+        ->has('commits', 1)->where('commits.0.id', $reply->id)->where('commits.0.parent.id', $parent->id));
     $this->getJson(route('commit-reply.index', [$parent, 'in_log' => true]))->assertOk()->assertJsonCount(0, 'data');
     $this->getJson(route('commit-reply.index', [$parent, 'in_log' => true, 'ids' => [$reply->id]]))->assertOk()->assertJsonCount(0, 'data');
     $this->getJson(route('commit-reply.index', $parent))->assertOk()->assertJsonPath('data.0.id', $reply->id);
@@ -558,14 +592,14 @@ it('lists guilds by members rather than commits and clears a mute when joining',
     Commit::factory()->count(3)->create(['body' => '#jobs']);
 
     $this->actingAs($admin)->get(route('guild.index'))->assertInertia(fn ($page) => $page
-        ->component('guild/index')->where('guilds.0.handle', 'rust')->where('guilds.0.member_count', 1)
-        ->where('guilds.1.is_joined', false)->where('guilds.1.is_muted', false));
+        ->component('guild/index')->where('guildPage.data.0.handle', 'rust')->where('guildPage.data.0.member_count', 1)
+        ->where('guildPage.data.1.is_joined', false)->where('guildPage.data.1.is_muted', false)->where('guilds', []));
     $this->put(route('guild-membership.update', $jobs), ['joined' => true])->assertRedirect();
     $this->put(route('guild-membership.update', $jobs), ['joined' => true])->assertRedirect();
     $this->put(route('guild-mute.update', $jobs), ['muted' => true])->assertRedirect();
     $this->get(route('guild.index'))->assertInertia(fn ($page) => $page
-        ->where('guilds.0.handle', 'jobs')->where('guilds.0.member_count', 1)
-        ->where('guilds.0.is_joined', true)->where('guilds.0.is_muted', true));
+        ->where('guildPage.data.0.handle', 'jobs')->where('guildPage.data.0.member_count', 1)
+        ->where('guildPage.data.0.is_joined', true)->where('guildPage.data.0.is_muted', true));
     $this->put(route('guild-membership.update', $jobs), ['joined' => false])->assertRedirect();
     $this->assertDatabaseHas('guild_preferences', ['guild_id' => $jobs->id, 'user_id' => $admin->id, 'joined_at' => null, 'muted_at' => now()]);
     $this->put(route('guild-mute.update', $jobs), ['muted' => false])->assertRedirect();
@@ -591,10 +625,10 @@ it('paginates matching guilds biggest first with handle ordering for ties', func
 
     $this->actingAs($admin)->get(route('guild.index', ['q' => 'Builders']))->assertOk()->assertInertia(fn ($page) => $page
         ->where('query', 'Builders')->where('guildPage.total', 25)->where('guildPage.last_page', 2)
-        ->where('guildPage.current_page', 1)->where('guildPage.data', [$popular->id, ...$guilds->take(23)->modelKeys()]));
+        ->where('guildPage.current_page', 1)->where('guildPage.data', fn ($data): bool => collect($data)->pluck('id')->all() === [$popular->id, ...$guilds->take(23)->modelKeys()])->where('guilds', []));
     $this->get(route('guild.index', ['q' => 'Builders', 'page' => 2]))->assertOk()->assertInertia(fn ($page) => $page
         ->where('query', 'Builders')->where('guildPage.current_page', 2)->where('guildPage.total', 25)
-        ->where('guildPage.data', [$guilds[23]->id]));
+        ->where('guildPage.data', fn ($data): bool => collect($data)->pluck('id')->all() === [$guilds[23]->id]));
     $this->get(route('guild.index', ['q' => 'Builders', 'page' => 3]))->assertOk()->assertInertia(fn ($page) => $page
         ->where('guildPage.data', [])->where('guildPage.total', 25));
 });
@@ -605,7 +639,7 @@ it('searches guild names handles and descriptions literally without case sensiti
     Guild::factory()->create(['user_id' => $admin->id, 'handle' => 'other', 'name' => 'Different people', 'description' => '100 percent safeXcode.']);
 
     $this->actingAs($admin)->get(route('guild.index', ['q' => $term]))->assertOk()->assertInertia(fn ($page) => $page
-        ->where('query', $normalized)->where('guildPage.data', $matches ? [$guild->id] : []));
+        ->where('query', $normalized)->where('guildPage.data', fn ($data): bool => collect($data)->pluck('id')->all() === ($matches ? [$guild->id] : [])));
 })->with([
     'name' => ['bUiLdErS', 'bUiLdErS', true],
     'handle' => ['  #RuStAcEaNs  ', 'RuStAcEaNs', true],
@@ -616,6 +650,38 @@ it('searches guild names handles and descriptions literally without case sensiti
     'no matches' => ['missing', 'missing', false],
 ]);
 
+it('returns complete viewer-specific cards only for the requested directory page', function (): void {
+    $viewer = User::factory()->create(['handle' => 'admin']);
+    $other = User::factory()->create(['handle' => 'other-admin']);
+    $guilds = Guild::factory()->count(49)->sequence(fn ($sequence): array => [
+        'handle' => 'group'.mb_str_pad((string) $sequence->index, 2, '0', STR_PAD_LEFT),
+    ])->create();
+    $target = $guilds[30];
+    $target->muters()->attach($viewer, ['muted_at' => now()]);
+
+    $response = $this->actingAs($viewer)->get(route('guild.index', ['page' => 2]), [
+        'X-Inertia-Version' => (string) resolve(HandleInertiaRequests::class)->version(request()),
+        'X-Inertia' => 'true', 'X-Inertia-Partial-Component' => 'guild/index', 'X-Inertia-Partial-Data' => 'guildPage',
+    ])->assertOk()->assertJsonCount(24, 'props.guildPage.data')->assertJsonPath('props.guildPage.total', 49)
+        ->assertJsonPath('props.guildPage.current_page', 2)->assertJsonPath('props.guildPage.last_page', 3)
+        ->assertJsonMissingPath('props.guilds')->assertJsonMissingPath('props.guildPage.data.0.user_id');
+    $data = $response->json('props.guildPage.data');
+    expect(collect($data)->pluck('id')->all())->toBe($guilds->slice(24, 24)->values()->modelKeys());
+    expect($data[6])->toBe([
+        'id' => $target->id, 'handle' => $target->handle, 'name' => $target->name,
+        'description' => $target->description, 'emoji' => $target->emoji, 'icon_url' => null,
+        'member_count' => 0, 'is_joined' => false, 'is_muted' => true, 'is_paused' => false,
+        'html_url' => route('guild.show', $target->handle),
+    ]);
+
+    $this->actingAs($other)->get(route('guild.index', ['page' => 2]))->assertInertia(fn ($page) => $page
+        ->where('guildPage.data.6.is_muted', false)->where('guilds', []));
+    $this->get('/search?q=%23'.$target->handle)->assertInertia(fn ($page) => $page
+        ->where('guildLookup.handle', $target->handle)->where('guildLookup.guild.name', $target->name)->missing('guilds'));
+    $this->get(route('guild.show', $target->handle))->assertInertia(fn ($page) => $page
+        ->where('guild.id', $target->id)->where('guild.name', $target->name)->missing('guilds'));
+});
+
 it('matches Unicode search terms consistently even with C-collated guild columns', function (string $field, string $text, string $term): void {
     DB::statement(sprintf('ALTER TABLE guilds ALTER COLUMN %s TYPE text COLLATE "C"', $field));
     $admin = User::factory()->create(['handle' => 'admin']);
@@ -623,7 +689,7 @@ it('matches Unicode search terms consistently even with C-collated guild columns
     Guild::factory()->create(['user_id' => $admin->id, 'handle' => 'unrelated', 'name' => 'Other', 'description' => 'No match.']);
 
     $this->actingAs($admin)->get(route('guild.index', ['q' => $term]))->assertOk()->assertInertia(fn ($page) => $page
-        ->where('guildPage.data', [$guild->id]));
+        ->where('guildPage.data', fn ($data): bool => collect($data)->pluck('id')->all() === [$guild->id]));
 })->with(['handle', 'name', 'description'])->with([
     'Greek prefix ending in sigma' => ['ΟΣΑ', 'ΟΣ'],
     'lowercase final sigma' => ['κοσμος', 'ΚΟΣΜΟΣ'],
@@ -631,16 +697,29 @@ it('matches Unicode search terms consistently even with C-collated guild columns
     'accented capital' => ['ÉCOLE', 'école'],
 ]);
 
-it('keeps directory results out of membership-only refreshes', function (): void {
+it('refreshes the selected directory records without repaginating after their ranks change', function (): void {
     $admin = User::factory()->create(['handle' => 'admin']);
-    $guild = Guild::factory()->create(['user_id' => $admin->id]);
-    $this->actingAs($admin)->put(route('guild-membership.update', $guild), ['joined' => true])->assertRedirect();
+    $guilds = Guild::factory()->count(25)->state(['user_id' => $admin->id])->sequence(fn ($sequence): array => [
+        'handle' => 'group'.mb_str_pad((string) $sequence->index, 2, '0', STR_PAD_LEFT),
+    ])->create();
+    $guild = $guilds->last();
+    $this->actingAs($admin)->get(route('guild.index', ['page' => 2]))->assertInertia(fn ($page) => $page
+        ->where('guildPage.data.0.handle', 'group24')->where('guilds', []));
+    $this->put(route('guild-membership.update', $guild), ['joined' => true])->assertRedirect();
 
-    $this->get(route('guild.index'), [
+    $this->get(route('guild.index', ['page' => 2]), [
         'X-Inertia-Version' => (string) resolve(HandleInertiaRequests::class)->version(request()),
         'X-Inertia' => 'true', 'X-Inertia-Partial-Component' => 'guild/index', 'X-Inertia-Partial-Data' => 'guilds',
-    ])->assertOk()->assertJsonPath('props.guilds.0.is_joined', true)->assertJsonMissingPath('props.guildPage');
+        'X-Guild-Handles' => json_encode([$guild->handle], JSON_THROW_ON_ERROR),
+    ])->assertOk()->assertJsonCount(1, 'props.guilds')->assertJsonPath('props.guilds.0.id', $guild->id)
+        ->assertJsonPath('props.guilds.0.is_joined', true)->assertJsonPath('props.guilds.0.member_count', 1)->assertJsonMissingPath('props.guildPage');
+    $this->get(route('guild.index', ['page' => 2]))->assertInertia(fn ($page) => $page->where('guildPage.data.0.id', $guilds[23]->id));
 });
+
+it('rejects malformed and unbounded directory refresh headers', function (string $header): void {
+    $this->actingAs(User::factory()->create(['handle' => 'admin']))
+        ->getJson(route('guild.index'), ['X-Guild-Handles' => $header])->assertUnprocessable()->assertJsonValidationErrors('visible_guilds');
+})->with(['invalid json', '"rust"', '{"handle":"rust"}', '{"0":"rust"}', json_encode(array_fill(0, 25, 'rust'), JSON_THROW_ON_ERROR)]);
 
 it('includes newly created guild cards when refreshing directory search results', function (): void {
     $admin = User::factory()->create(['handle' => 'admin']);
@@ -649,9 +728,9 @@ it('includes newly created guild cards when refreshing directory search results'
 
     $this->get(route('guild.index', ['q' => 'rust']), [
         'X-Inertia-Version' => (string) resolve(HandleInertiaRequests::class)->version(request()),
-        'X-Inertia' => 'true', 'X-Inertia-Partial-Component' => 'guild/index', 'X-Inertia-Partial-Data' => 'guildPage,query,guilds',
-    ])->assertOk()->assertJsonPath('props.guildPage.data', [$guild->id])->assertJsonPath('props.guilds.0.id', $guild->id)
-        ->assertJsonPath('props.guilds.0.name', 'Rust');
+        'X-Inertia' => 'true', 'X-Inertia-Partial-Component' => 'guild/index', 'X-Inertia-Partial-Data' => 'guildPage,query',
+    ])->assertOk()->assertJsonPath('props.guildPage.data.0.id', $guild->id)->assertJsonCount(1, 'props.guildPage.data')
+        ->assertJsonPath('props.guildPage.data.0.name', 'Rust')->assertJsonMissingPath('props.guilds');
 });
 
 it('validates guild directory search and page inputs', function (array $input, string $field): void {
@@ -1117,7 +1196,7 @@ it('refuses new board submissions to a paused guild but still shows regular hash
     $this->assertDatabaseCount('commits', 0);
     $this->assertDatabaseCount('scheduled_commits', 0);
     $this->post(route('commit.store'), ['body' => 'A regular #rust commit'])->assertSessionHasNoErrors();
-    $this->get(route('guild.show', 'rust'))->assertOk()->assertInertia(fn ($page) => $page->has('commits', 1)->where('guilds.0.is_paused', true));
+    $this->get(route('guild.show', 'rust'))->assertOk()->assertInertia(fn ($page) => $page->has('commits', 1)->where('guild.is_paused', true));
 })->with(['commit.store', 'commit-preview.store', 'scheduled-commit.store']);
 
 it('refuses a board submission if the guild is paused after validation', function (string $route, string $action): void {

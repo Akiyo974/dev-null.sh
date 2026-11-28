@@ -1,7 +1,8 @@
-import { Head, router, usePage } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import { Pencil, Pin } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { show as showCommit } from '@/actions/App/Http/Controllers/CommitController';
 import { update as updatePin } from '@/actions/App/Http/Controllers/GuildCommitPinController';
 import { show } from '@/actions/App/Http/Controllers/GuildController';
 import { update as updateRead } from '@/actions/App/Http/Controllers/GuildReadController';
@@ -26,11 +27,12 @@ import { WordmarkText } from '@/components/wordmark-text';
 import AppLayout from '@/layouts/app-layout';
 import { firstReadCommit } from '@/lib/guild-read-marker';
 import type { Commit } from '@/types';
-import type { JoinedGuild } from '@/types/guild';
+import type { Guild, JoinedGuild } from '@/types/guild';
 
 export default function Show({
     handle,
     readFrom,
+    guild,
     canModerate,
     pinnedCommit,
     commits,
@@ -39,13 +41,14 @@ export default function Show({
 }: {
     handle: string;
     readFrom: string | null;
+    guild: Guild;
     canModerate: boolean;
     pinnedCommit: Commit | null;
     commits: Commit[];
     page: number;
     hasMore: boolean;
 }) {
-    const { guilds, auth } = usePage().props;
+    const { auth } = usePage().props;
     const [isLoading, setIsLoading] = useState(false);
     const [isPinning, setIsPinning] = useState(false);
     const pinnedCommitId = pinnedCommit?.id;
@@ -61,9 +64,8 @@ export default function Show({
         scrollY: number;
         overflowAnchor: string;
     } | null>(null);
-    const guild = guilds?.find((guild) => guild.handle === handle);
-    const guildId = guild?.id;
-    const isJoined = guild?.is_joined === true;
+    const guildId = guild.id;
+    const isJoined = guild.is_joined;
     const firstReadCommitId = firstReadCommit(
         commits.filter((commit) => commit.id !== pinnedCommitId),
         readFrom,
@@ -71,7 +73,7 @@ export default function Show({
     )?.id;
 
     useEffect(() => {
-        if (guildId === undefined || !isJoined) {
+        if (!isJoined) {
             return;
         }
 
@@ -312,29 +314,52 @@ export default function Show({
                                         commit={commit}
                                         endsWithDot
                                         threadActions={
-                                            canModerate && (
+                                            commit.parent_id ? (
                                                 <Button
                                                     variant="ghost"
                                                     size="sm"
-                                                    className="min-h-9 px-2 text-[13px] text-muted-foreground aria-pressed:text-primary"
-                                                    aria-label={`${isPinned ? 'Unpin from' : 'Pin to'} board`}
-                                                    aria-pressed={isPinned}
-                                                    title={
-                                                        isPinned
-                                                            ? 'Unpin from board'
-                                                            : 'Pin to board'
-                                                    }
-                                                    disabled={
-                                                        isPinning || isLoading
-                                                    }
-                                                    onClick={() => pin(commit)}
+                                                    className="min-h-9 px-2 text-[13px] text-muted-foreground"
+                                                    asChild
                                                 >
-                                                    <Pin
-                                                        aria-hidden
-                                                        className="size-3.5"
-                                                    />
-                                                    Pin
+                                                    <Link
+                                                        prefetch
+                                                        href={showCommit({
+                                                            profile:
+                                                                commit.author,
+                                                            commit,
+                                                        })}
+                                                    >
+                                                        View full thread
+                                                    </Link>
                                                 </Button>
+                                            ) : (
+                                                canModerate && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="min-h-9 px-2 text-[13px] text-muted-foreground aria-pressed:text-primary"
+                                                        aria-label={`${isPinned ? 'Unpin from' : 'Pin to'} board`}
+                                                        aria-pressed={isPinned}
+                                                        title={
+                                                            isPinned
+                                                                ? 'Unpin from board'
+                                                                : 'Pin to board'
+                                                        }
+                                                        disabled={
+                                                            isPinning ||
+                                                            isLoading
+                                                        }
+                                                        onClick={() =>
+                                                            pin(commit)
+                                                        }
+                                                    >
+                                                        <Pin
+                                                            aria-hidden
+                                                            className="size-3.5"
+                                                        />
+                                                        Pin
+                                                    </Button>
+                                                )
                                             )
                                         }
                                     />
